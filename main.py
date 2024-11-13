@@ -1,15 +1,17 @@
 import os
 import hashlib
-import zlib
 
 
 """
-create blob():
-    takes file
-create_tree()
-create_commit()
-create_branch()
-create_head() ?
+Example usage:
+
+file_1 = "my.txt"
+
+vcs.init()
+
+vcs.display_changed_files()
+vcs.stage_files(file_1)
+vcs.make_commit()
 """
 
 all_commit = []
@@ -190,7 +192,8 @@ class MyVcs:
         if not self.target_exists(blob_path):
             self.store_blob(blob, hashed_blob)
         else:
-            print(f"File: {file} has already been stored...")
+            print(f"No changes made to: {file}")
+            return
 
         curr_idx = f"{file} {hashed_blob}"
 
@@ -309,6 +312,7 @@ class MyVcs:
     def make_commit(self):
         with open(f"{MyVcs.vcs}/index", "r") as f:
             index_content = f.readlines()
+            print(f"cont of ind: {index_content}, {not index_content}")
             if not index_content:
                 print("Nothing to commit.")
                 return
@@ -364,9 +368,6 @@ class MyVcs:
             content = f.read()
             content = content.split("\n")
             f.close()
-        print(f.closed)
-        
-        
         
         for line in content:
             if "parent" in line:
