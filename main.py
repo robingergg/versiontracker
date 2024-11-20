@@ -20,6 +20,7 @@ all_commit = []
 class MyVcs:
 
     vcs = ".vcs/"
+    curr_workdir = "/home/robin/programming/versiontracker/"
 
     def log_msg(self, msg: str, op: str):
         if op == "i":
@@ -49,7 +50,6 @@ class MyVcs:
             os.path.join(vcs, "objects"),
             os.path.join(vcs, "refs"),
             os.path.join(vcs, "refs", "heads"),
-            # os.path.join(vcs, "refs", "heads", "main"),
         ]
 
         for dir in dirs_to_add:
@@ -68,7 +68,10 @@ class MyVcs:
 
         if not os.path.exists(os.path.join(vcs, "refs", "heads", "main")):
             with open(os.path.join(vcs, "refs", "heads", "main"), "w") as f:
-                f.write("")
+
+                commit, hashed_commit = self.create_commit("", parent_commit="", msg="First(init) Commit")
+                self.store_blob(commit, hashed_commit)
+                f.write(hashed_commit)
 
 
     def create_blob(self, file: str): # eg my.txt
@@ -133,11 +136,8 @@ class MyVcs:
         for data in files:
             file_name = data[0]
             hashed_blob = data[1]
-            # tmp_content = f"{file_mode} {file_name}\x00".encode('utf-8')
             tmp_content = f"{file_mode} {file_name}\x00"
             tmp_content += hashed_blob
-            # tmp_content = tmp_content + bytes.fromhex(hashed_blob)
-            content += f"{tmp_content}\n"
         
         content = content.encode('utf-8')
 
@@ -169,8 +169,23 @@ class MyVcs:
         return commit, hashed_commit
     
     def get_current_branch(self):
-        with open(f"{MyVcs.vcs}/HEAD", "r") as f:
-            return f.read()
+        curr_branch = None
+        # Determine the absolute path to the HEAD file
+        head_path = os.path.join(MyVcs.vcs, 'HEAD')
+        abs_head_path = os.path.join(MyVcs.curr_workdir, head_path)
+        # abs_head_path = os.path.abspath(head_path)
+        
+        try:
+            with open(abs_head_path, "r") as f:
+                curr_branch = f.read().strip()
+                print(f"Current branch: {curr_branch}")
+            f.close()
+        except FileNotFoundError:
+            print(f"Error: The file {abs_head_path} does not exist.")
+        except Exception as e:
+            print(f"An error occurred: {e}")
+        
+        return curr_branch
     
     def show_branches(self):
         curr_branch = self.get_current_branch()
@@ -232,7 +247,6 @@ class MyVcs:
         with open(m_path, "rb") as f:
             content = f.read()
             content = content.decode('utf-8').split("\n")
-            print(content)
             for line in content:
                 if "parent" in line:
                     stored_parent_commit = line.split(" ")[1]
@@ -244,33 +258,43 @@ class MyVcs:
         return stored_parent_commit, stored_message, tree_hash
     
     def show_modified_objects(self, tree_hash):
+        in_index = False
+        dir_path = tree_hash[:2]
+        file_path = tree_hash[2:]
+        changed_files = []
+        m_path = ".vcs/" + "objects/" + dir_path + "/" + file_path
 
-        # go thru each file in the directory
-        for root, dirs, files in os.walk('.'):
+        if not tree_hash:
+            print("No tree hash.. return...")
+            return
+        
+        all_dirs, all_files = self.get_all_dirs_in_repo()
 
-            changed_files = []
+        with open(m_path, "rb") as f:
+            content = f.read()
+            content = content.split(b'\x00')
 
-            dir_path = tree_hash[:2]
-            file_path = tree_hash[2:]
-            m_path = ".vcs/" + "objects/" + dir_path + "/" + file_path 
-            # m_path = os.path.join(MyVcs.vcs, "objects", dir_path, file_path)
-            with open(m_path, "rb") as f:
-                content = f.read()
-                # content = content.decode('utf-8').split("\n")
-                content = content.split(b'\x00')
-
-                all_files = self.get_all_files_in_repo()
-                for i in range(len(content)):
-                    elem = content[i]
-                    elem = elem.decode().split(" ")
-                    if isinstance(elem, list) and len(elem) > 1:
-                        elem = elem[1]
-                    if elem in all_files: 
-                        stored_hash = content[i+1].strip().decode('utf-8')
-                        curr_hash = self.create_blob(elem)[1]
-                        
-                        if stored_hash != curr_hash:
+            for i in range(len(content)):
+                elem = content[i]
+                elem = elem.decode().split(" ")
+                if isinstance(elem, list) and len(elem) > 1:
+                    elem = elem[1]
+                if elem in all_files: 
+                    stored_hash = content[i+1].strip().decode('utf-8')
+                    curr_hash = self.create_blob(elem)[1]
+                    
+                    if stored_hash != curr_hash:
+                        index_content = self._get_staged()
+                    
+                        if index_content:
+                            for cont in index_content:
+                                if elem in cont:
+                                    in_index = True
+                                if not in_index:
+                                    changed_files.append(elem)
+                        else:
                             changed_files.append(elem)
+                        
         print("Modified files:")
         for file in changed_files:
             print(file)
@@ -281,25 +305,52 @@ class MyVcs:
             if  [".vcs", "__pycache__"] not in dirs:
                 files_list.extend(files)
         return files_list
-
-    def show_staged_files(self):
+    
+    def get_all_dirs_in_repo(self):
+        dir_list = []
+        file_list = []
+        for root, dirs, files in os.walk('.'):
+            inside_root = any([elem in root for elem in [".venv", ".vcs", ".git", ".vscode", "__pycache__"]])
+            if not inside_root:
+                for dir in dirs:
+                    if dir not in [".venv", ".vcs", ".git", ".vscode", "__pycache__"]:
+                        dir_list.append(dir)
+                for file in files:
+                    if file not in [".gitignore"]:
+                        file_list.append(file)
+        return dir_list, file_list
+    
+    def _get_staged(self) -> list:
+        index_content = None
         with open(f"{MyVcs.vcs}/index", "r") as f:
             index_content = f.readlines()
+        return index_content
 
-            print("\nStaged files\n-----------------")
+    def show_staged_files(self) -> None:
+        index_content = self._get_staged()
+        print("\nStaged files\n-----------------")
         for line in index_content:
             print(f"STAGED: {line.split()[0]}")
 
-    def commit(self):
-        with open(f"{MyVcs.vcs}/index", "r") as f:
-            index_content = f.readlines()
-        index_content = [line.strip() for line in index_content]
-        print(index_content)
-
     def get_branch_latest_commit(self, branch):
-        with open(f"{MyVcs.vcs}/refs/heads/{branch}", "r") as f:
-            return f.read()
+        curr_branch_path = os.path.join(MyVcs.curr_workdir, MyVcs.vcs, f"refs/heads/{branch}")
+        print(f"Attempting to open branch file at: {curr_branch_path}")
         
+        if not os.path.exists(curr_branch_path):
+            raise FileNotFoundError(f"Branch file does not exist at: {curr_branch_path}")
+        
+        try:
+            with open(curr_branch_path, "r") as f:
+                latest_commit = f.read().strip()
+                print(f"Latest commit: {latest_commit}")
+                if not latest_commit:
+                    raise ValueError("Latest commit could not be read.")
+            f.close()
+            return latest_commit
+        except Exception as e:
+            print(f"Error reading branch file: {e}")
+            raise
+
     def get_commit_id_from_curr_branch(self):
         curr_branch = self.get_current_branch()
         return self.get_branch_latest_commit(curr_branch)
@@ -309,7 +360,7 @@ class MyVcs:
         with open(f"{MyVcs.vcs}/refs/heads/{branch}", "w") as f:
             return f.write(commit_hash)
         
-    def make_commit(self):
+    def make_commit(self, message: str = None):
         with open(f"{MyVcs.vcs}/index", "r") as f:
             index_content = f.readlines()
             print(f"cont of ind: {index_content}, {not index_content}")
@@ -324,7 +375,7 @@ class MyVcs:
 
         latest_commit = self.get_commit_id_from_curr_branch()
 
-        commit, hashed_commit = self.create_commit(hashed_tree, parent_commit=latest_commit)
+        commit, hashed_commit = self.create_commit(hashed_tree, parent_commit=latest_commit, msg=message)
 
         self.store_blob(commit, hashed_commit)
 
@@ -335,8 +386,28 @@ class MyVcs:
         # update latest commit in curr branch
         self.update_latest_commit_in_curr_branch(hashed_commit)
 
-    def read_tree(self, m_hash):
-        pass
+    def read_tree(tree: bytes) -> list[list]:
+        read_vals = []
+        tree = tree.decode()
+        tree = tree.split("\n")
+        for line in tree:
+            curr_elem = []
+
+            if not line:
+                continue
+            
+            splitted = line.split("\x00")
+
+            if "tree" in splitted[0]:
+                curr_elem.append(splitted[1].split(" ")[1])
+                curr_elem.append(splitted[2])
+                read_vals.append(curr_elem)
+            else:
+                curr_elem.append(splitted[0].split(" ")[1])
+                curr_elem.append(splitted[1])
+                read_vals.append(curr_elem)
+
+        return read_vals
 
     def read_commit(self, m_hash):
         pass
@@ -356,10 +427,12 @@ class MyVcs:
             print(f"({commit}) - {stored_message}")
             commit = stored_parent_commit
             # return stored_parent_commit
+            
+    def read_hash(self, hash, callback, all_comm, all_msgs):
 
-    def read_hash(self, hash, callback, all_comm):
-
-        # all_comm = []
+        if not hash:
+            print("No hash given. Returning...")
+            return
 
         dir_path = os.path.join(MyVcs.vcs, "objects", hash[:2])
         blob_path = os.path.join(dir_path, hash[2:])
@@ -367,43 +440,40 @@ class MyVcs:
         with open(blob_path, "r") as f:
             content = f.read()
             content = content.split("\n")
-            f.close()
+        f.close()
         
+        parent_comm = None
+        message = None
+        parent_commit = None
         for line in content:
             if "parent" in line:
                 parent_commit = line.split(" ")[1]
-                if parent_commit:
-                    # all_comm.append(parent_commit)
-                    callback(all_comm, parent_commit)
-                    self.read_hash(parent_commit, callback, all_comm)
+
+            elif "message" in line:
+                message = " ".join(line.split(" ")[1:])
+
+            if not line:
+                # parent_comm = parent_commit
+                callback(all_comm, hash, all_msgs, message)
+                # callback(all_comm, parent_commit, all_msgs, message)
+                self.read_hash(parent_commit, callback, all_comm, all_msgs)
 
     def display_commit_tree(self):
         all_comm = []
+        all_msgs = []
 
-        def collect_commits(all_comm, commit):
+        def collect_commits(all_comm, commit, all_msgs, msg):
             all_comm.append(commit)
-            return all_comm
+            all_msgs.append(msg)
 
-        self.read_hash(self.get_commit_id_from_curr_branch(), collect_commits, all_comm)
+        curr_commit_id = self.get_commit_id_from_curr_branch()
+        self.read_hash(curr_commit_id, collect_commits, all_comm, all_msgs)
 
-        print(f"{self.get_commit_id_from_curr_branch()} <- HEAD")
-        for commit in all_comm:
-            print(commit)
-    
+        for i in range(0, len(all_comm)):
+            commit = all_comm[i]
+            msg = all_msgs[i]
 
-# vcs = MyVcs()
-# file_name = "to.txt"
-
-# content = vcs.read_file(file_name)
-# vcs.init()
-# vcs.show_branches()
-# blob_1, hashed_blob_1 = vcs.create_blob(file_name)
-# vcs.store_blob(content, hashed_blob_1)
-# tree, hashed_tree = vcs.create_tree(file_name, hashed_blob_1)
-# vcs.store_blob(tree, hashed_tree)
-# # hashed_tree = b'tree 34\x00100655 my.txt\x00Z\xb2\xf8\xa42:\xba\xfb\x10\xab\xb6\x86W\xd9\xd3\x9f\x1awPW'
-# commit, hashed_commit = vcs.create_commit(hashed_tree)
-# vcs.store_blob(commit, hashed_commit)
-# vcs.stage_files(file_name)
-# vcs.show_staged_files()
-# vcs.commit()
+            if commit == curr_commit_id:
+                print(f"{commit} - {msg} <- HEAD")
+            else:
+                print(f"{commit} - {msg}")
