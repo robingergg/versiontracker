@@ -479,16 +479,46 @@ class MyVcs:
             cont = self.get_blob_content(blob)
             print(cont.decode())
 
-    def get_tree_content_from_commit_hash(self, commit_hash: Union[bytes, str]) -> Union[list, None]:
+    def _get_tree_content_from_commit_hash(self, commit_hash: Union[bytes, str]) -> Union[list, None]:
         """
         Takes a commit hash and returns it's tree content,
         eg: ['tree 54\x00100655 my.txt\x00965b616c94adf9144531acc13aada5bd1ee05018']
+
+        Suggestion: read_tree_content()
         """
         tree_hash = self.get_tree_hash_from_commit(commit_hash)
         if not tree_hash:
             return None
         tree_content = self.get_blob_content(tree_hash)
         return tree_content
+    
+    def read_tree_content(self, tree_obj: bytes) -> list[list[str, str]]:
+        """
+        Takes a tree object, eg: b'tree 55\x00100655 my.txt\x002427deaa4f262d9d1d5981e3a7094de0546bc48f\n'
+        and returns all file names and corresponding blobs.
+
+        Suggestion: use it with _get_tree_content_from_commit_hash()
+        """
+        collected_file_names_and_contnet = []
+
+        # split tree from the rest of the content
+        tree_obj = tree_obj.decode()
+        tree_obj = tree_obj.split("\x00", 1)[1]
+
+        # split each file entry by new line char
+        tree_obj = tree_obj.split("\n")
+
+        # extract filenames and contents
+        for entry in tree_obj:
+            if entry:
+                entry = entry.split(" ", 1)[1] # extract the filename and contnet part
+                file_name = entry.split("\x00")[0]
+                file_content = entry.split("\x00")[1]
+                collected_file_names_and_contnet.append([file_name, file_content])
+
+        # return list
+        return collected_file_names_and_contnet
+
     
     def get_tree_hash_from_commit(self, commit_blob: bytes) -> Union[str, None]:
         """
@@ -603,10 +633,9 @@ class MyVcs:
         Gets the latest commit and it's content
         """
         latest_commit = self.get_branch_latest_commit(self.get_current_branch())
-        tree_content = self.get_tree_content_from_commit_hash(latest_commit)
 
         index_content = self._get_staged()
-        index_content = self.organize_index_content_into_nested_list(index_content)
+        index_content = self._organize_index_content_into_nested_list(index_content)
 
         # get the current latest commits attribute to update the new ammended commit with it
         parent_commit, stored_message, tree_hash = self.get_commit_attributes(latest_commit)
@@ -626,7 +655,7 @@ class MyVcs:
         # update current branch with the latest commit
         self.update_latest_commit_in_curr_branch(commit_hash)
 
-    def organize_index_content_into_nested_list(self, index_content) -> list[list[str]]:
+    def _organize_index_content_into_nested_list(self, index_content) -> list[list[str]]:
         """
         _get_staged() returns a list of modified items, but
         for further processing we need them separately inside
@@ -752,3 +781,35 @@ class MyVcs:
         
         content = blob.split(b"\x00")[1]
         return content
+    
+    def reset_hard(self, commit_hash: str) -> None:
+        # tree_object_content = self.get_all_files_and_hashes_in_commit(commit_hash)
+        # print(tree_object_content)
+        tree_content = self._get_tree_content_from_commit_hash(commit_hash)
+        print(tree_content)
+
+        files_and_hashes = self.read_tree_content(tree_content)
+        print(files_and_hashes)
+
+        # go thru on each file, read contnet and write it
+        # get file names and actual contents
+        files_contents = self.read_content_of_files(files_and_hashes)
+        print("FILE CONTENTS: ", files_contents)
+
+        # loop thru each fileand overide it's content
+        for content_block in files_contents:
+            file_name = content_block[0]
+            file_content = content_block[1]
+
+            # check what type of content the file has and write
+            # the contnet based on the reset accordingly
+            writeing_mode = ""
+            if isinstance(file_content, bytes):
+                writeing_mode = "wb"
+            elif isinstance(file_content, str):
+                writeing_mode = "w"
+            with open(file_name, writeing_mode) as f:
+                f.write(file_content)
+
+        # update HEAD
+        self.update_latest_commit_in_curr_branch(commit_hash)
