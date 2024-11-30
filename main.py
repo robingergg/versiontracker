@@ -1,6 +1,7 @@
 import os
 import hashlib
 from typing import Union
+from colorama import Fore, Back, Style
 
 
 """
@@ -404,10 +405,27 @@ class MyVcs:
                 print("Nothing to commit.")
                 return
             
+        current_commit_content = self.get_all_files_and_hashes_in_commit(self.get_branch_latest_commit(self.get_current_branch()))
+        # if current commit content is mepty (initial commit) then make it an empty list
+        if not current_commit_content:
+            current_commit_content = []
+
+        # removing new line command from content
+        current_commit_content = [[line.strip("\n") for line in block] for block in current_commit_content]
+
         index_content = [line.strip() for line in index_content]
         # process string to file name and blob hash
         index_content = [[line.split()[0], line.split()[1]] for line in index_content]
-        tree, hashed_tree = self.create_tree(index_content)
+
+        # check if a given file is in the current commit content, and if so,
+        # remove it and append the staged version instead.
+        # This is important because the same file/ content can be part of the previous commit as well as the index area
+        # (change made in file.txt). In this case we want to keep the staged version because that is the latest version of the file.
+        merged_dict = {item[0]: item for item in current_commit_content}
+        merged_dict.update({item[0]: item for item in index_content})
+        cleaned_entries = list(merged_dict.values())
+
+        tree, hashed_tree = self.create_tree(cleaned_entries)
         self.store_blob(tree, hashed_tree)
 
         latest_commit = self.get_commit_id_from_curr_branch()
@@ -427,30 +445,24 @@ class MyVcs:
         name and it's blob and returns it.
 
         Returns:
-            file name + content hash
+            [<file_name>, <content_hash>]
         """
         read_vals = []
-
 
         for line in tree:
             if isinstance(line, bytes):
                 line = line.decode()
 
-            curr_elem = []
-
             if not line:
                 continue
             
-            splitted = line.split("\x00")
+            splitted = line.split("\x00", 1)[1].split("\n")
 
-            if "tree" in splitted[0]:
-                curr_elem.append(splitted[1].split(" ")[1])
-                curr_elem.append(splitted[2])
-                read_vals.append(curr_elem)
-            else:
-                curr_elem.append(splitted[0].split(" ")[1])
-                curr_elem.append(splitted[1])
-                read_vals.append(curr_elem)
+            for data in splitted:
+                if data:
+                    file_name, file_hash = data.split(" ")[1].split("\x00")
+                    elem = [file_name, file_hash]
+                    read_vals.append(elem)
 
         return read_vals
     
@@ -467,12 +479,14 @@ class MyVcs:
             cont = self.get_blob_content(blob)
             print(cont.decode())
 
-    def get_tree_content_from_commit_hash(self, commit_hash: Union[bytes, str]) -> list:
+    def get_tree_content_from_commit_hash(self, commit_hash: Union[bytes, str]) -> Union[list, None]:
         """
         Takes a commit hash and returns it's tree content,
         eg: ['tree 54\x00100655 my.txt\x00965b616c94adf9144531acc13aada5bd1ee05018']
         """
         tree_hash = self.get_tree_hash_from_commit(commit_hash)
+        if not tree_hash:
+            return None
         tree_content = self.get_blob_content(tree_hash)
         return tree_content
     
@@ -570,16 +584,19 @@ class MyVcs:
             else:
                 print(f"{commit} - {msg}")
 
-    # def get_all_files_and_hashes_in_commit(self, commit_hash: str) -> list:
-    #     """
-    #     Takes a commit id, reads it's tree object and returns 
-    #     all files included in that tree object.
-    #     """
-    #     tree_hash_from_commit = self.get_tree_hash_from_commit(commit_hash)
-    #     tree_hash_content = self.get_blob_content(tree_hash_from_commit)
-    #     tree_obj_content = self._read_tree_obj(tree_hash_content)
+    def get_all_files_and_hashes_in_commit(self, commit_hash: str) -> Union[list, None]:
+        """
+        Takes a commit id, reads it's tree object and returns 
+        all files included in that tree object.
+        """
+        tree_hash_from_commit = self.get_tree_hash_from_commit(commit_hash)
+        if not tree_hash_from_commit:
+            return None
+        tree_hash_content = self.get_blob_content(tree_hash_from_commit)
+        tree_hash_content = [tree_hash_content]
+        tree_obj_content = self._read_tree_obj(tree_hash_content)
 
-    #     return tree_obj_content
+        return tree_obj_content
     
     def ammend(self, message: str = None):
         """
@@ -619,3 +636,119 @@ class MyVcs:
         for cont in index_content:
             tmp_inx_cont.append(cont.split(" "))
         return tmp_inx_cont
+
+    def read_commit_differences(self, commit_hash_1: str, commit_hash_2: str):
+        """
+        Given two commit hash, it will first extract the trees inside them, then
+        get all files, and hteir contents and compare them and log any difference.
+        """
+        if commit_hash_1 == commit_hash_2:
+            print("No difference...")
+            return
+
+        tree_content_1 = self.get_all_files_and_hashes_in_commit(commit_hash_1)
+        tree_content_2 = self.get_all_files_and_hashes_in_commit(commit_hash_2)
+
+        if not tree_content_1 and tree_content_2:
+            files_content_info = self.read_content_of_files(tree_content_2)
+            for file_block in files_content_info:
+                file_name = file_block[0]
+                file_content = file_block[1].decode() if isinstance(file_block[1], bytes) else file_block[1]
+                print(f"Difference for '{file_name}':")
+                print(Fore.GREEN + file_content + Style.RESET_ALL) # text color/reset
+
+        elif tree_content_1 and tree_content_2:
+            files_content_info_1 = self.read_content_of_files(tree_content_1)
+            files_content_info_2 = self.read_content_of_files(tree_content_2)
+
+            files_content_info_2 = self.search_for_block_difference(files_content_info_1, files_content_info_2)
+            # If anymore file(s) left in the second block content then process it
+            if files_content_info_2:
+                self.search_for_block_difference(files_content_info_2, files_content_info_1)
+
+    def search_for_block_difference(self, files_content_info_1: list[list[str, bytes]],
+                                    files_content_info_2: list[list[str, bytes]]) -> list:
+            """
+            Searches for differences between two block, which are made from commits -> trees.
+            """
+            for file_block_1 in files_content_info_1:
+
+                file_name_1 = file_block_1[0]
+                file_content_1 = file_block_1[1]
+
+                file_present = self.search_for_file_in_other_file_block(file_name_1, files_content_info_2)
+
+                # print out new file attributes
+                if not file_present:
+                    print("New file:")
+                    print(Fore.GREEN + f"{file_name_1}:")
+                    print(file_content_1.decode() + Style.RESET_ALL)
+                # print out the differences
+                else:
+                    file_content_2 = self.get_content_by_file_name(file_name_1, files_content_info_2)
+                    if file_content_1 != file_content_2:
+
+                        print()
+                        print(f"Difference of '{file_name_1}' are:")
+                        print(Fore.RED + f"- {file_content_1.decode()}")
+                        print(Fore.GREEN + f"+ {file_content_2.decode()}" + Style.RESET_ALL) # reset text color
+                
+                # filter out each file which has been processed
+                files_content_info_2 = [
+                    block for block in files_content_info_2 
+                    if block[0] != file_name_1
+                ]
+
+            return files_content_info_2
+
+    def get_content_by_file_name(self, file_name: str,
+                                 files_content_info_2: list) -> Union[str, None]:
+        """
+        Gets the contnet of a file by it's file name.
+        Used for getting info from file blocks when asserting differences.
+        """
+        for file_block_2 in files_content_info_2:
+            file_name_2 = file_block_2[0]
+            file_content_2 = file_block_2[1]
+
+            if file_name == file_name_2:
+                return file_content_2
+        return None
+
+    def search_for_file_in_other_file_block(self, file_name: str, files_content_info: list) -> bool:
+        """
+        Searches for a given file by it's name in an other file info block,
+        generated by reading the contents of a tree.
+        """
+        for file_block in files_content_info:
+            if file_name in file_block:
+                return True
+        return False
+
+    def read_content_of_files(self, files_content: list[list[str, str]]) -> list[list[str, str]]:
+        """
+        Reads each files content in the list.
+        Example input: [[<file_name_1>, <file_hash_1>], [<file_name_1>, <file_hash_1>]]
+        """
+        files_informations = []
+        for file_content_pair in files_content:
+            file_name = file_content_pair[0]
+            file_hash = file_content_pair[1].strip("\n")
+
+            file_content = self.get_blob_content(file_hash)
+            file_content = self._get_content_from_blob(file_content)
+
+            files_informations.append([file_name, file_content])
+
+        return files_informations
+
+    def _get_content_from_blob(self, blob: str) -> str:
+        """
+        Returns the actual contnet of a blob (file).
+        """
+        indicator = blob.split(b"\x00")[0]
+        blob_type = indicator.split(b" ")[0]
+        contnet_lngth = indicator.split(b" ")[1]
+        
+        content = blob.split(b"\x00")[1]
+        return content
