@@ -24,6 +24,10 @@ difference_parser = cmd2.Cmd2ArgumentParser()
 difference_parser.add_argument('-h1', '--hash-1')
 difference_parser.add_argument('-h2', '--hash-2')
 
+reset_hard_parser = cmd2.Cmd2ArgumentParser()
+reset_hard_parser.add_argument('-c', '--commit')
+
+
 class MainVcs(cmd2.Cmd):
 
     def do_init(self, args: cmd2.Statement):
@@ -78,9 +82,17 @@ class MainVcs(cmd2.Cmd):
             message = args.message
         vcs.ammend(message)
 
+    @cmd2.with_argparser(reset_hard_parser)
+    def do_reset_hard(self, args):
+        """
+        Rebases to the selected commit.
+        """
+        self.poutput(args.commit)
+        vcs.reset_hard(args.commit)
 
-file_1 = "my.txt"
-file_2 = "to.txt"
+
+file_1 = "foo.txt"
+file_2 = "foo_2.txt"
 
 
 if __name__ == '__main__':

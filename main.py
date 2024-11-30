@@ -783,6 +783,10 @@ class MyVcs:
         return content
     
     def reset_hard(self, commit_hash: str) -> None:
+        """
+        Resets to a given commit by the commit's hash.
+        Doesn not preserve the changes made since that commit.
+        """
         # tree_object_content = self.get_all_files_and_hashes_in_commit(commit_hash)
         # print(tree_object_content)
         tree_content = self._get_tree_content_from_commit_hash(commit_hash)
