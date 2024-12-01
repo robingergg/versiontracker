@@ -825,3 +825,41 @@ class MyVcs:
         made since the current commit and between the selected commit.
         """
         raise NotImplementedError
+    
+    def _get_current_commit_all_file_content(self) -> list:
+        latest_commit = self.get_commit_id_from_curr_branch()
+        tree_content = self._get_tree_content_from_commit_hash(latest_commit)
+        files_and_hashes = self.read_tree_content(tree_content)
+        # go thru on each file, read contnet and write it
+        # get file names and actual contents
+        files_content = self.read_content_of_files(files_and_hashes)
+        return files_content
+    
+    def _get_file_name_from_files_content_block(self, content_block: list[str]):
+        """
+        Returns the file names from a content block
+        which has the next format: [['foo.txt', b'Hello1']]
+        """
+        file_names = []
+        for content in content_block:
+            file_names.append(content[0])
+        return file_names
+    
+    def show_untracked_files(self):
+        """
+        Dispalys the files that are not in the
+        current branch's latest commit's tree. 
+        """
+        untracked_files = []
+
+        all_files_and_their_content = self._get_current_commit_all_file_content()
+        all_file_names = self._get_file_name_from_files_content_block(all_files_and_their_content)
+        all_file_and_dir_in_repo = self._get_all_dirs_and_files_in_repo()[1] # extracting all the files form the repo
+
+        for file in all_file_and_dir_in_repo:
+            if file not in all_file_names:
+                untracked_files.append(file)
+        print("Untracked files:")
+        for file in untracked_files:
+            print(Fore.RED + file)
+        print(Fore.RESET)

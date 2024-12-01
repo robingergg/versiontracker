@@ -27,6 +27,8 @@ difference_parser.add_argument('-h2', '--hash-2')
 reset_hard_parser = cmd2.Cmd2ArgumentParser()
 reset_hard_parser.add_argument('-c', '--commit')
 
+untracked_parser = cmd2.Cmd2ArgumentParser()
+
 
 class MainVcs(cmd2.Cmd):
 
@@ -48,7 +50,10 @@ class MainVcs(cmd2.Cmd):
         vcs.read_commit_differences(args.hash_1, args.hash_2)
 
     def do_remove_vcs(self, args):
-        shutil.rmtree(MyVcs.vcs)
+        if os.path.exists(MyVcs.vcs):
+            shutil.rmtree(MyVcs.vcs)
+        else:
+            print(f"There is no such path to remove: {MyVcs.vcs}")
 
     @cmd2.with_argparser(stage_parser)
     def do_stage_files(self, args):
@@ -89,6 +94,10 @@ class MainVcs(cmd2.Cmd):
         """
         self.poutput(args.commit)
         vcs.reset_hard(args.commit)
+
+    @cmd2.with_argparser(untracked_parser)
+    def do_untracked_files(self, args):
+        vcs.show_untracked_files()
 
 
 file_1 = "foo.txt"
