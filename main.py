@@ -75,13 +75,6 @@ class MyVcs:
             with open(f"{MyVcs.vcs}/index", "w") as f:
                 f.write("")
 
-        if not os.path.exists(os.path.join(vcs, "refs", "heads", "main")):
-            with open(os.path.join(vcs, "refs", "heads", "main"), "w") as f:
-
-                commit, hashed_commit = self.create_commit("", parent_commit="", msg="First(init) Commit")
-                self.store_blob(commit, hashed_commit)
-                f.write(hashed_commit)
-
     def create_file_blob(self, file: str): # eg my.txt
         """ 
         Creates a blob for a file.
@@ -370,7 +363,8 @@ class MyVcs:
 
         curr_branch_path = os.path.join(MyVcs.curr_workdir, MyVcs.vcs, f"refs/heads/{branch}")
         if not os.path.exists(curr_branch_path):
-            raise FileNotFoundError(f"Branch file does not exist at: {curr_branch_path}")
+            print(f"Creating initial commit on branch '{curr_branch_path.split("/")[-1]}'")
+            return None
         try:
             with open(curr_branch_path, "r") as f:
                 latest_commit = f.read().strip()
@@ -499,6 +493,8 @@ class MyVcs:
 
         Suggestion: use it with _get_tree_content_from_commit_hash()
         """
+        if not tree_obj:
+            return None
         collected_file_names_and_contnet = []
 
         # split tree from the rest of the content
@@ -558,12 +554,13 @@ class MyVcs:
             content = content.split("\n")
         f.close()
         
-        parent_comm = None
         message = None
         parent_commit = None
         for line in content:
             if "parent" in line:
                 parent_commit = line.split(" ")[1]
+                if parent_commit == "None":
+                    parent_commit = None
 
             elif "message" in line:
                 message = " ".join(line.split(" ")[1:])
@@ -572,7 +569,8 @@ class MyVcs:
                 # parent_comm = parent_commit
                 callback(all_comm, hash, all_msgs, message)
                 # callback(all_comm, parent_commit, all_msgs, message)
-                self._read_hash(parent_commit, callback, all_comm, all_msgs)
+                if parent_commit:
+                    self._read_hash(parent_commit, callback, all_comm, all_msgs)
 
     def get_blob_content(self, blob: Union[bytes, str]) -> bytes:
         """Gets any blob/hash, reads it and returns it's content."""
@@ -619,6 +617,8 @@ class MyVcs:
         Takes a commit id, reads it's tree object and returns 
         all files included in that tree object.
         """
+        if not commit_hash:
+            return None
         tree_hash_from_commit = self.get_tree_hash_from_commit(commit_hash)
         if not tree_hash_from_commit:
             return None
@@ -797,11 +797,11 @@ class MyVcs:
 
         # go thru on each file, read contnet and write it
         # get file names and actual contents
-        files_contents = self.read_content_of_files(files_and_hashes)
-        print("FILE CONTENTS: ", files_contents)
+        files_content = self.read_content_of_files(files_and_hashes)
+        print("FILE CONTENTS: ", files_content)
 
         # loop thru each fileand overide it's content
-        for content_block in files_contents:
+        for content_block in files_content:
             file_name = content_block[0]
             file_content = content_block[1]
 
@@ -817,3 +817,11 @@ class MyVcs:
 
         # update HEAD
         self.update_latest_commit_in_curr_branch(commit_hash)
+
+    def reset_soft(self, commit_hash: str):
+        """
+        Resets to a given commit by the commit's hash.
+        Stores all changes/ new files in the index area, that has been
+        made since the current commit and between the selected commit.
+        """
+        raise NotImplementedError
