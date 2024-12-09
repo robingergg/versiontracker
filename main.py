@@ -785,10 +785,8 @@ class MyVcs:
     def reset_hard(self, commit_hash: str) -> None:
         """
         Resets to a given commit by the commit's hash.
-        Doesn not preserve the changes made since that commit.
+        Does not preserve the changes made since that commit.
         """
-        # tree_object_content = self.get_all_files_and_hashes_in_commit(commit_hash)
-        # print(tree_object_content)
         tree_content = self._get_tree_content_from_commit_hash(commit_hash)
         print(tree_content)
 
@@ -800,13 +798,13 @@ class MyVcs:
         files_content = self.read_content_of_files(files_and_hashes)
         print("FILE CONTENTS: ", files_content)
 
-        # loop thru each fileand overide it's content
+        # loop thru each file and overide it's content
         for content_block in files_content:
             file_name = content_block[0]
             file_content = content_block[1]
 
             # check what type of content the file has and write
-            # the contnet based on the reset accordingly
+            # the content based on the reset accordingly
             writeing_mode = ""
             if isinstance(file_content, bytes):
                 writeing_mode = "wb"
@@ -824,7 +822,37 @@ class MyVcs:
         Stores all changes/ new files in the index area, that has been
         made since the current commit and between the selected commit.
         """
-        raise NotImplementedError
+        # get current commit's changes first
+        current_commit_hash = self.get_commit_id_from_curr_branch()
+        current_tree_content = self._get_tree_content_from_commit_hash(current_commit_hash)
+        
+        current_files_and_hashes = self.read_tree_content(current_tree_content)
+
+        # adding current contents and hash to index
+        self._place_file_name_and_hash_to_index(current_files_and_hashes)
+
+        # update HEAD
+        self.update_latest_commit_in_curr_branch(commit_hash)
+
+    def _place_file_name_and_hash_to_index(self, content_block: list[list[str, str]]):
+        """
+        Gets a content block, eg: [['foo.txt', '4dc6ab670c842fe9eb94280eeefe484ce271eb9d']]
+        and writes it into the idnex file to stage them during soft reset.
+        """
+        for block in content_block:
+            file_name = block[0]
+            file_hash = block[1]
+            curr_idx = f"{file_name} {file_hash}"
+            with open(f"{MyVcs.vcs}/index", "r") as f:
+                index_content = f.read()
+
+            if file_hash not in index_content:
+                index_content += f"{curr_idx}\n"
+                with open(f"{MyVcs.vcs}/index", "w") as f:
+                    f.write(index_content)
+            else:
+                print(f"\nAlready staged: {file_name}")
+
     
     def _get_current_commit_all_file_content(self) -> list:
         latest_commit = self.get_commit_id_from_curr_branch()
