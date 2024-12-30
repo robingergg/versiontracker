@@ -23,9 +23,16 @@ ammend_parser.add_argument('-m', '--message')
 difference_parser = cmd2.Cmd2ArgumentParser()
 difference_parser.add_argument('-h1', '--hash-1')
 difference_parser.add_argument('-h2', '--hash-2')
+difference_parser.add_argument('-f', '--filenames', nargs='+')
+
+show_file_difference_parser = cmd2.Cmd2ArgumentParser()
+show_file_difference_parser.add_argument('-f', '--filenames')
 
 reset_hard_parser = cmd2.Cmd2ArgumentParser()
 reset_hard_parser.add_argument('-c', '--commit')
+
+reset_soft_parser = cmd2.Cmd2ArgumentParser()
+reset_soft_parser.add_argument('-c', '--commit')
 
 untracked_parser = cmd2.Cmd2ArgumentParser()
 
@@ -44,10 +51,10 @@ class MainVcs(cmd2.Cmd):
         """
         Displays the difference between two files.
         """
-        if not args.hash_1 or not args.hash_2:
-            raise ValueError("Missing file parameter")
-        
-        vcs.read_commit_differences(args.hash_1, args.hash_2)
+        if args.hash_1 and args.hash_2:
+            vcs.read_commit_differences(args.hash_1, args.hash_2)
+        elif args.filenames:
+            vcs.read_commit_differences(file_names=args.filenames)
 
     def do_remove_vcs(self, args):
         if os.path.exists(MyVcs.vcs):
@@ -95,9 +102,22 @@ class MainVcs(cmd2.Cmd):
         self.poutput(args.commit)
         vcs.reset_hard(args.commit)
 
+    @cmd2.with_argparser(reset_soft_parser)
+    def do_reset_soft(self, args):
+        """
+        Rebases to the selected commit.
+        """
+        self.poutput(args.commit)
+        vcs.reset_soft(args.commit)
+
     @cmd2.with_argparser(untracked_parser)
     def do_untracked_files(self, args):
         vcs.show_untracked_files()
+
+    @cmd2.with_argparser(show_file_difference_parser)
+    def do_show_file_difference(self, args):
+        # file_names = [filename for filename in args.filenames]
+        vcs.show_file_difference(args.filenames)
 
 
 file_1 = "foo.txt"
