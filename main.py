@@ -264,10 +264,11 @@ class MyVcs:
 
         return stored_parent_commit, stored_message, tree_hash
     
-    def show_modified_objects(self, tree_hash: str):
+    def show_modified_objects(self, tree_hash: str, ret_files: bool = False) -> list:
         """
         Prints the modified files. Modified files are the ones
         which hashes are different now, than it is in the objects directory.
+        Returns list of files that are modified since last commit if requested.
         """
         if not tree_hash:
             print("No tree hash. Return...")
@@ -313,7 +314,10 @@ class MyVcs:
                                     modified_files.append(file)
                         else:
                             modified_files.append(file)
-                        
+        
+        if ret_files:
+            return modified_files
+        
         print("Modified files:")
         for file in modified_files:
             print(file)
@@ -321,7 +325,7 @@ class MyVcs:
     def _get_all_dirs_and_files_in_repo(self) -> tuple:
         """
         Gets all dirs and files in the repo.
-        Exludes files/ dirs given. TODO: make it configurable.
+        Exlude files/ dirs given. TODO: make it configurable.
         """
         dir_list = []
         file_list = []
@@ -336,6 +340,19 @@ class MyVcs:
                     if file not in [".gitignore"]:
                         file_list.append(file)
         return dir_list, file_list
+    
+    def _get_file_path(self, file_name: str) -> str:
+        """
+        Searches for a file in the given repository path and returns its full path.
+
+        :param repo_path: The root directory of the repository.
+        :param file_name: The name of the file to search for.
+        :return: A list of paths where the file is found.
+        """
+        file_paths = []
+        for root, dirs, files in os.walk(MyVcs.curr_workdir):
+            if file_name in files:
+                return os.path.join(root, file_name)
     
     def _get_staged(self) -> list:
         """
@@ -666,11 +683,47 @@ class MyVcs:
             tmp_inx_cont.append(cont.split(" "))
         return tmp_inx_cont
 
-    def read_commit_differences(self, commit_hash_1: str, commit_hash_2: str):
+    def _get_file_current_content(self, file_name: str) -> Union[str, None]:
+        """
+        Takes a file name and returns its
+        current content from the repository.
+        """
+        file_path = self._get_file_path(file_name)
+        with open(file_path, "rb") as f:
+            content = f.read()
+        return content
+
+    def read_commit_differences(self, commit_hash_1: str = None, commit_hash_2: str = None, file_names: Union[list[str]] = None):
         """
         Given two commit hash, it will first extract the trees inside them, then
-        get all files, and hteir contents and compare them and log any difference.
+        get all files, and their contents and compare them and log any difference.
         """
+        # if no hashes given, then get current commmit and
+        # current commits parent hash
+        if not commit_hash_1 and not commit_hash_2:
+            print("No commits given, applying current and its parent commit...")
+            current_commit_id = self.get_commit_id_from_curr_branch()
+            parent_commit_of_current_commit = self._get_parent_commit(current_commit_id)
+
+            commit_hash_1 = parent_commit_of_current_commit
+            commit_hash_2 = current_commit_id
+
+        # if file name(s) given then get the list of modified files
+        if file_names:
+            modified_files = self.show_modified_objects(self._get_latest_tree_hash(), ret_files=True)
+
+            # then get the content of the files from latest commit vs
+            # the content currently is and compare to display
+            all_files_content = self._get_current_commit_all_file_content()
+            for file in modified_files:
+                for content_block in all_files_content:
+                    if content_block[0] == file:
+                        file_content = self._get_file_current_content(content_block[0])
+                        saved_file_content = content_block[1].decode()
+                        curr_file_content = file_content.decode()
+                        self._compare_file_content(saved_file_content, curr_file_content)
+            return
+
         if commit_hash_1 == commit_hash_2:
             print("No difference...")
             return
@@ -682,6 +735,9 @@ class MyVcs:
             files_content_info = self.read_content_of_files(tree_content_2)
             for file_block in files_content_info:
                 file_name = file_block[0]
+                if file_names and file_name not in file_names:
+                    print(f"File: {file_name} not found in given file names: {file_names}")
+                    return
                 file_content = file_block[1].decode() if isinstance(file_block[1], bytes) else file_block[1]
                 print(f"Difference for '{file_name}':")
                 print(Fore.GREEN + file_content + Style.RESET_ALL) # text color/reset
@@ -690,21 +746,87 @@ class MyVcs:
             files_content_info_1 = self.read_content_of_files(tree_content_1)
             files_content_info_2 = self.read_content_of_files(tree_content_2)
 
-            files_content_info_2 = self.search_for_block_difference(files_content_info_1, files_content_info_2)
+            files_content_info_2 = self.search_for_block_difference(files_content_info_1, files_content_info_2, file_names)
             # If anymore file(s) left in the second block content then process it
             if files_content_info_2:
-                self.search_for_block_difference(files_content_info_2, files_content_info_1)
+                self.search_for_block_difference(files_content_info_2, files_content_info_1, file_names)
+
+    def _get_latest_tree_hash(self) -> str:
+        """
+        Extracts latest commit and retrieves its tree hash and returns it.
+        """
+        latest_commit = self.get_branch_latest_commit(self.get_current_branch())
+        stored_parent_commit, stored_message, tree_hash = self.get_commit_attributes(latest_commit)
+        return tree_hash
+
+    def _compare_file_content(self, last_content: str, current_content: str) -> str:
+        """
+        Compares two files line by line and returns difference.
+        """
+        print(last_content)
+        print(current_content)
+
+        list_last_cont = last_content.split("\n")
+        list_curr_cont = current_content.split("\n")
+
+        longer_list_count = max(len(list_last_cont), len(list_curr_cont))
+        shorter_list_count = min(len(list_last_cont), len(list_curr_cont))
+
+        if longer_list_count != shorter_list_count:
+            print("WARNING: Do something to not to check shorter lists content.")
+
+        for i in range(longer_list_count):
+            if (i + 1) > shorter_list_count:
+                print("WARNING: Only add longer lists line from now on.")
+
+            try:
+                last_cont_line = list_last_cont[i]
+            except:
+                last_cont_line = None
+            try:
+                curr_cont_line = list_curr_cont[i]
+            except:
+                curr_cont_line = None
+            finally:
+                if last_cont_line and curr_cont_line:
+                    if last_cont_line == curr_cont_line:
+                        print(last_cont_line)
+                    else:
+                        print(Fore.GREEN + "+ " + curr_cont_line + Fore.RESET)
+                        print(Fore.RED + "- " + last_cont_line + Fore.RESET)
+
+                else:
+                    if curr_cont_line and not last_cont_line:
+                        print(Fore.GREEN + "+ " + curr_cont_line + Fore.RESET)
+                    elif not curr_cont_line and last_cont_line:
+                        print(Fore.RED + "- " + last_cont_line + Fore.RESET)
 
     def search_for_block_difference(self, files_content_info_1: list[list[str, bytes]],
-                                    files_content_info_2: list[list[str, bytes]]) -> list:
+                                    files_content_info_2: list[list[str, bytes]], file_names: Union[list[str]] = None) -> list:
             """
             Searches for differences between two block, which are made from commits -> trees.
             """
+            search_for_file = False
+            # if file_names:
+            #     latest_commit = self.get_branch_latest_commit(self.get_current_branch())
+            #     stored_parent_commit, stored_message, tree_hash = self.get_commit_attributes(latest_commit)
+            #     modified_files = self.show_modified_objects(tree_hash, ret_files=True)
+
             for file_block_1 in files_content_info_1:
 
                 file_name_1 = file_block_1[0]
                 file_content_1 = file_block_1[1]
 
+                if file_names:
+                    if file_name_1 in file_names:
+                        search_for_file = True
+
+                # terminate if searching only for specific file(s) difference
+                # but is not found
+                if file_names:
+                    if not search_for_file and file_name_1 not in file_names:
+                        pass
+                
                 file_present = self.search_for_file_in_other_file_block(file_name_1, files_content_info_2)
 
                 # print out new file attributes
@@ -714,7 +836,7 @@ class MyVcs:
                     print(file_content_1.decode() + Style.RESET_ALL)
                 # print out the differences
                 else:
-                    file_content_2 = self.get_content_by_file_name(file_name_1, files_content_info_2)
+                    file_content_2 = self.get_content_by_file_name_from_block(file_name_1, files_content_info_2)
                     if file_content_1 != file_content_2:
 
                         print()
@@ -730,10 +852,10 @@ class MyVcs:
 
             return files_content_info_2
 
-    def get_content_by_file_name(self, file_name: str,
+    def get_content_by_file_name_from_block(self, file_name: str,
                                  files_content_info_2: list) -> Union[str, None]:
         """
-        Gets the contnet of a file by it's file name.
+        Gets the content of a file by its file name.
         Used for getting info from file blocks when asserting differences.
         """
         for file_block_2 in files_content_info_2:
@@ -855,8 +977,22 @@ class MyVcs:
 
     
     def _get_current_commit_all_file_content(self) -> list:
+        """
+        Returns all file names and their hashes from current commit.
+        """
         latest_commit = self.get_commit_id_from_curr_branch()
         tree_content = self._get_tree_content_from_commit_hash(latest_commit)
+        files_and_hashes = self.read_tree_content(tree_content)
+        # go thru on each file, read contnet and write it
+        # get file names and actual contents
+        files_content = self.read_content_of_files(files_and_hashes)
+        return files_content
+    
+    def _get_commits_all_file_content(self, commit_id: str):
+        """
+        Returns all file names and their hashes from selected commit.
+        """
+        tree_content = self._get_tree_content_from_commit_hash(commit_id)
         files_and_hashes = self.read_tree_content(tree_content)
         # go thru on each file, read contnet and write it
         # get file names and actual contents
@@ -891,3 +1027,42 @@ class MyVcs:
         for file in untracked_files:
             print(Fore.RED + file)
         print(Fore.RESET)
+
+    def _get_parent_commit(self, commit_id: str) -> Union[None, str]:
+        """
+        Returns the parent commit of selected commit.
+        """
+        stored_parent_commit, stored_message, tree_hash = self.get_commit_attributes(commit_id)
+        if stored_parent_commit:
+            return stored_parent_commit
+        print(f"No parent commit of commit: {commit_id}")
+
+    def show_file_difference(self, file_names: Union[list[str]], staged: bool = False):
+        """
+        Dispalys the difference in one or more files.
+        """
+        staged = True
+        if staged:
+            staged_content = self._get_staged()
+
+            # get current content and compare with staged
+            all_file_and_dir_in_repo = self._get_all_dirs_and_files_in_repo()[1]
+
+            for file_line in staged_content:
+                    file_name = file_line.split(" ")[0]
+                    file_blob = file_line.split(" ")[1].strip("\n")
+                    if file_name in all_file_and_dir_in_repo:
+                        files_content = self.get_blob_content(file_blob)
+                        files_content = self._get_content_from_blob(files_content)
+                        current_content = self._get_file_current_content(file_name)
+
+                        # compare the two and display deviation
+                        if current_content != files_content:
+                            self._compare_file_content(current_content.decode(), files_content.decode())
+            return
+
+        # get current commit and current's parent commit
+        current_commit_id = self.get_commit_id_from_curr_branch()
+        parent_commit_of_current_commit = self._get_parent_commit(current_commit_id)
+
+        self.read_commit_differences(parent_commit_of_current_commit, current_commit_id)
