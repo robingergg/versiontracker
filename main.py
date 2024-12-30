@@ -807,10 +807,6 @@ class MyVcs:
             Searches for differences between two block, which are made from commits -> trees.
             """
             search_for_file = False
-            # if file_names:
-            #     latest_commit = self.get_branch_latest_commit(self.get_current_branch())
-            #     stored_parent_commit, stored_message, tree_hash = self.get_commit_attributes(latest_commit)
-            #     modified_files = self.show_modified_objects(tree_hash, ret_files=True)
 
             for file_block_1 in files_content_info_1:
 
