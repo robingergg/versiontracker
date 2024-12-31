@@ -701,7 +701,6 @@ class MyVcs:
         """
         # if file names are given and staged is true then dispaly only staged changes
         if staged and file_names:
-            print("Entered staged...")
             self.show_staged_difference(file_names)
             return
 
@@ -819,7 +818,6 @@ class MyVcs:
             search_for_file = False
 
             for file_block_1 in files_content_info_1:
-
                 file_name_1 = file_block_1[0]
                 file_content_1 = file_block_1[1]
 
@@ -844,11 +842,8 @@ class MyVcs:
                 else:
                     file_content_2 = self.get_content_by_file_name_from_block(file_name_1, files_content_info_2)
                     if file_content_1 != file_content_2:
-
                         print()
-                        print(f"Difference of '{file_name_1}' are:")
-                        print(Fore.RED + f"- {file_content_1.decode()}")
-                        print(Fore.GREEN + f"+ {file_content_2.decode()}" + Style.RESET_ALL) # reset text color
+                        self._compare_file_content(file_content_1.decode(), file_content_2.decode())
                 
                 # filter out each file which has been processed
                 files_content_info_2 = [
@@ -1045,7 +1040,7 @@ class MyVcs:
             return stored_parent_commit
         print(f"No parent commit of commit: {commit_id}")
 
-    def show_staged_difference(self, file_names: Union[list[str]], staged: bool = False):
+    def show_staged_difference(self):
         """
         Dispalys the difference in one or more files.
         """
