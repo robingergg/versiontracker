@@ -763,8 +763,8 @@ class MyVcs:
         """
         Compares two files line by line and returns difference.
         """
-        print(last_content)
-        print(current_content)
+        # print(last_content)
+        # print(current_content)
 
         list_last_cont = last_content.split("\n")
         list_curr_cont = current_content.split("\n")
@@ -800,6 +800,9 @@ class MyVcs:
                         print(Fore.GREEN + "+ " + curr_cont_line + Fore.RESET)
                     elif not curr_cont_line and last_cont_line:
                         print(Fore.RED + "- " + last_cont_line + Fore.RESET)
+                    elif not curr_cont_line and not last_cont_line:
+                        # print(f"The Line: ", last_cont_line)
+                        print()
 
     def search_for_block_difference(self, files_content_info_1: list[list[str, bytes]],
                                     files_content_info_2: list[list[str, bytes]], file_names: Union[list[str]] = None) -> list:
@@ -1037,7 +1040,6 @@ class MyVcs:
         """
         Dispalys the difference in one or more files.
         """
-        staged = True
         if staged:
             staged_content = self._get_staged()
 
