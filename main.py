@@ -509,6 +509,7 @@ class MyVcs:
         and returns all file names and corresponding blobs.
 
         Suggestion: use it with _get_tree_content_from_commit_hash()
+        or use with read_content_of_files() as a post-processor.
         """
         if not tree_obj:
             return None
@@ -693,20 +694,26 @@ class MyVcs:
             content = f.read()
         return content
 
-    def read_commit_differences(self, commit_hash_1: str = None, commit_hash_2: str = None, file_names: Union[list[str]] = None):
+    def read_commit_differences(self, commit_hash_1: str = None, commit_hash_2: str = None, file_names: Union[list[str]] = None, staged: bool = False):
         """
         Given two commit hash, it will first extract the trees inside them, then
         get all files, and their contents and compare them and log any difference.
         """
+        # if file names are given and staged is true then dispaly only staged changes
+        if staged and file_names:
+            print("Entered staged...")
+            self.show_staged_difference(file_names)
+            return
+
         # if no hashes given, then get current commmit and
         # current commits parent hash
-        if not commit_hash_1 and not commit_hash_2:
-            print("No commits given, applying current and its parent commit...")
-            current_commit_id = self.get_commit_id_from_curr_branch()
-            parent_commit_of_current_commit = self._get_parent_commit(current_commit_id)
+        # if not commit_hash_1 and not commit_hash_2:
+        #     print("\nNo commits given, applying current and its parent commit...")
+        #     current_commit_id = self.get_commit_id_from_curr_branch()
+        #     parent_commit_of_current_commit = self._get_parent_commit(current_commit_id)
 
-            commit_hash_1 = parent_commit_of_current_commit
-            commit_hash_2 = current_commit_id
+        #     commit_hash_1 = parent_commit_of_current_commit
+        #     commit_hash_2 = current_commit_id
 
         # if file name(s) given then get the list of modified files
         if file_names:
@@ -879,6 +886,8 @@ class MyVcs:
         """
         Reads each files content in the list.
         Example input: [[<file_name_1>, <file_hash_1>], [<file_name_1>, <file_hash_1>]]
+
+        Suggestion: Use with read_tree_content() as pre-processed value.
         """
         files_informations = []
         for file_content_pair in files_content:
@@ -1036,31 +1045,38 @@ class MyVcs:
             return stored_parent_commit
         print(f"No parent commit of commit: {commit_id}")
 
-    def show_file_difference(self, file_names: Union[list[str]], staged: bool = False):
+    def show_staged_difference(self, file_names: Union[list[str]], staged: bool = False):
         """
         Dispalys the difference in one or more files.
         """
-        if staged:
-            staged_content = self._get_staged()
+        staged_content = self._get_staged()
 
-            # get current content and compare with staged
-            all_file_and_dir_in_repo = self._get_all_dirs_and_files_in_repo()[1]
+        # get current content and compare with staged
+        latest_tree_hash = self._get_latest_tree_hash()
+        latest_content = self.get_blob_content(latest_tree_hash)
+        files_and_hashes = self.read_tree_content(latest_content)
 
-            for file_line in staged_content:
-                    file_name = file_line.split(" ")[0]
-                    file_blob = file_line.split(" ")[1].strip("\n")
-                    if file_name in all_file_and_dir_in_repo:
-                        files_content = self.get_blob_content(file_blob)
+        # contains files names and their content in the next format: [[<file_name>, <file_content]] ->
+        files_content_info = self.read_content_of_files(files_and_hashes)
+
+        for file_line in staged_content:
+                staged_file_name = file_line.split(" ")[0]
+                staged_file_blob = file_line.split(" ")[1].strip("\n")
+
+
+                # if file_name in latest_tree_hash:
+                for file_info_block in files_content_info:
+                    latest_file_name = file_info_block[0]
+                    latest_file_content = file_info_block[1]
+
+                    if staged_file_name == latest_file_name:
+                        files_content = self.get_blob_content(staged_file_blob)
                         files_content = self._get_content_from_blob(files_content)
-                        current_content = self._get_file_current_content(file_name)
 
-                        # compare the two and display deviation
-                        if current_content != files_content:
-                            self._compare_file_content(current_content.decode(), files_content.decode())
-            return
-
-        # get current commit and current's parent commit
-        current_commit_id = self.get_commit_id_from_curr_branch()
-        parent_commit_of_current_commit = self._get_parent_commit(current_commit_id)
-
-        self.read_commit_differences(parent_commit_of_current_commit, current_commit_id)
+                        # compare the two and display deviation if there is any
+                        if latest_file_content != files_content:
+                            self._compare_file_content(latest_file_content.decode(), files_content.decode())
+                        # this shall not happend since this part of the code
+                        # will only be called if there is staged content 
+                        else:
+                            print(f"No deviation found in file: {staged_file_name}")
