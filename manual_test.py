@@ -24,6 +24,7 @@ difference_parser = cmd2.Cmd2ArgumentParser()
 difference_parser.add_argument('-h1', '--hash-1')
 difference_parser.add_argument('-h2', '--hash-2')
 difference_parser.add_argument('-f', '--filenames', nargs='+')
+difference_parser.add_argument('-s', '--staged', action="store_true")
 
 show_file_difference_parser = cmd2.Cmd2ArgumentParser()
 show_file_difference_parser.add_argument('-f', '--filenames')
@@ -52,9 +53,9 @@ class MainVcs(cmd2.Cmd):
         Displays the difference between two files.
         """
         if args.hash_1 and args.hash_2:
-            vcs.read_commit_differences(args.hash_1, args.hash_2)
+            vcs.read_commit_differences(args.hash_1, args.hash_2, staged=args.staged)
         elif args.filenames:
-            vcs.read_commit_differences(file_names=args.filenames)
+            vcs.read_commit_differences(file_names=args.filenames, staged=args.staged)
 
     def do_remove_vcs(self, args):
         if os.path.exists(MyVcs.vcs):
@@ -117,7 +118,7 @@ class MainVcs(cmd2.Cmd):
     @cmd2.with_argparser(show_file_difference_parser)
     def do_show_file_difference(self, args):
         # file_names = [filename for filename in args.filenames]
-        vcs.show_file_difference(args.filenames)
+        vcs.show_staged_difference(args.filenames)
 
 
 file_1 = "foo.txt"
