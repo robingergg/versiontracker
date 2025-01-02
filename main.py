@@ -1,5 +1,6 @@
 import os
 import hashlib
+import subprocess
 from typing import Union
 from colorama import Fore, Back, Style
 
@@ -233,12 +234,12 @@ class MyVcs:
         latest_commit = self.get_branch_latest_commit(self.get_current_branch())
 
         if latest_commit:
-            stored_parent_commit, stored_message, tree_hash = self.get_commit_attributes(latest_commit)
-            self.show_modified_objects(tree_hash)
+            ret_lib = self.get_commit_attributes(latest_commit)
+            self.show_modified_objects(ret_lib.get("tree"))
         else:
             print("Error: no latest commit.")
 
-    def get_commit_attributes(self, commit_hash: str) -> tuple:
+    def get_commit_attributes(self, commit_hash: str) -> dict:
         """
         Reads a commit content by it's hash and get's it's attributes,
         such as parent, message, tree.
@@ -246,23 +247,33 @@ class MyVcs:
         dir_path = commit_hash[:2]
         file_path = commit_hash[2:]
 
+        stored_tree_hash = None
         stored_parent_commit = None
+        stored_author = None
         stored_message = None
-        tree_hash = None
+
+        return_lib = {}
 
         m_path = os.path.join(MyVcs.obj_path, dir_path, file_path)
         with open(m_path, "rb") as f:
             content = f.read()
             content = content.decode('utf-8').split("\n")
+            print(f"Splitted commit content: {content}")
             for line in content:
                 if "parent" in line:
                     stored_parent_commit = line.split(" ")[1]
+                    return_lib.update({"parent": stored_parent_commit})
                 elif "message" in line:
                     stored_message = " ".join(line.split(" ")[1:])
+                    return_lib.update({"message": stored_message})
                 elif "tree" in line:
-                    tree_hash = line.split(" ")[-1]
+                    stored_tree_hash = line.split(" ")[-1]
+                    return_lib.update({"tree": stored_tree_hash})
+                elif "author" in line:
+                    stored_author = line.split(" ")[-1]
+                    return_lib.update({"author": stored_author})
 
-        return stored_parent_commit, stored_message, tree_hash
+        return return_lib
     
     def show_modified_objects(self, tree_hash: str, ret_files: bool = False) -> list:
         """
@@ -604,7 +615,7 @@ class MyVcs:
             return content
         raise ValueError(f"No content value could be read from blob: {blob}")
 
-    def display_commit_tree(self):
+    def display_commit_tree(self, ret_data: bool = False) -> Union[None, list[dict]]:
         """
         Displays the commit log (git log --graph --oneline) recurseivly.
         It takes the current commit id which can be the latest commit or a parent commit
@@ -613,6 +624,7 @@ class MyVcs:
         """
         all_comm = []
         all_msgs = []
+        commit_lib = []
 
         def collect_commits(all_comm, commit, all_msgs, msg):
             all_comm.append(commit)
@@ -625,10 +637,16 @@ class MyVcs:
             commit = all_comm[i]
             msg = all_msgs[i]
 
+            # building hash lib as a return value if requested
+            commit_lib.append({"hash": commit, "message": msg})
+
             if commit == curr_commit_id:
                 print(f"{commit} - {msg} <- HEAD")
             else:
                 print(f"{commit} - {msg}")
+
+        if ret_data:
+            return commit_lib
 
     def get_all_files_and_hashes_in_commit(self, commit_hash: str) -> Union[list, None]:
         """
@@ -656,7 +674,7 @@ class MyVcs:
         index_content = self._organize_index_content_into_nested_list(index_content)
 
         # get the current latest commits attribute to update the new ammended commit with it
-        parent_commit, stored_message, tree_hash = self.get_commit_attributes(latest_commit)
+        ret_lib = self.get_commit_attributes(latest_commit)
         
         # create a new tree object
         tree, tree_blob = self.create_tree(index_content)
@@ -664,10 +682,10 @@ class MyVcs:
 
         # if got new message, assign it
         if not message:
-            message = stored_message
+            message = ret_lib.get("message")
 
         # create a new commit object
-        commit, commit_hash = self.create_commit(hashed_tree=tree_blob, parent_commit=parent_commit, msg=message)
+        commit, commit_hash = self.create_commit(hashed_tree=tree_blob, parent_commit=ret_lib.get("parent"), msg=message)
         self.store_blob(commit, commit_hash)
 
         # update current branch with the latest commit
@@ -762,8 +780,8 @@ class MyVcs:
         Extracts latest commit and retrieves its tree hash and returns it.
         """
         latest_commit = self.get_branch_latest_commit(self.get_current_branch())
-        stored_parent_commit, stored_message, tree_hash = self.get_commit_attributes(latest_commit)
-        return tree_hash
+        ret_lib = self.get_commit_attributes(latest_commit)
+        return ret_lib.get("tree")
 
     def _compare_file_content(self, last_content: str, current_content: str) -> str:
         """
@@ -1035,7 +1053,8 @@ class MyVcs:
         """
         Returns the parent commit of selected commit.
         """
-        stored_parent_commit, stored_message, tree_hash = self.get_commit_attributes(commit_id)
+        ret_lib = self.get_commit_attributes(commit_id)
+        stored_parent_commit = ret_lib.get("parent")
         if stored_parent_commit:
             return stored_parent_commit
         print(f"No parent commit of commit: {commit_id}")
@@ -1075,3 +1094,122 @@ class MyVcs:
                         # will only be called if there is staged content 
                         else:
                             print(f"No deviation found in file: {staged_file_name}")
+
+    def interactive_rebase(self, target_commit: str = None, is_target_included: bool = False) -> None:
+        """
+        Rebase to a specific commit.
+        """
+        # 1.) get all the commit hash and message between
+        # latest commit and target commit 
+        commit_tree = self.display_commit_tree(ret_data=True)
+        
+        affected_commits = []
+        target_found = False
+
+        while not target_found:
+            for commit_obj in commit_tree:
+                if commit_obj["hash"] == target_commit:
+                    # go on
+                    target_found = True
+
+                    if is_target_included:
+                        affected_commits.append(commit_obj)
+
+                    break
+                
+                else:
+                    # append each commit until target commit
+                    affected_commits.append(commit_obj)
+
+        print(f"Affected commits: {affected_commits}")
+
+        # 2.) open nano and write the selected commits
+        # TODO continue from here
+        tmp_file = "tmp.txt"
+        with open(tmp_file, "w") as f:
+            for content in affected_commits:
+                f.write(f"pick {content["hash"]} {content["message"]}\n")
+
+        try:
+            result = subprocess.run(["nano", tmp_file], check=True)
+
+            if result.returncode == 0:
+                # 3.) read back the modified temp file
+                with open(tmp_file, "r") as f:
+                    tmp_file_content = f.read()
+                    print(f"tmp file content: \n{tmp_file_content}")
+                    # TODO: parse file output
+                    tmp_file_content = tmp_file_content.split("\n") # split content based on newline
+                    tmp_file_content = [content for content in tmp_file_content if content] # remove empty content
+                    print(f"tmp file content: \n{tmp_file_content}")
+                    for block in tmp_file_content:
+                        action = block.split(" ")[0]
+                        commit_hash = block.split(" ")[1]
+                        commit_msg = block.split(" ")[2:]
+
+                        if action == "r" or action == "reword":
+                            self.interactive_reword(commit_hash, affected_commits)
+
+                    # TODO: do action according to file output
+            else:
+                print("Nano closed unexpectedly.")
+        
+        except FileNotFoundError:
+            print(f"File was not found: {tmp_file}, which is not supposed to happen...")
+        except Exception as e:
+            print(f"Unexpected error happened: {e}")
+
+    def interactive_reword(self, tar_commit: str, affected_commits: list):
+        """
+        Implementation of the reword function of
+        git like version control system.
+        """
+        # TODO: implement reword functionality
+        # commit_content = self.get_blob_content(commit)
+        # print(f"commit content: {commit_content}")
+        targ_ret_lib = self.get_commit_attributes(tar_commit)
+        print(f"commit content: {targ_ret_lib}")
+
+        # TODO: open an other nano interface to write modified commit message/ title
+        # MOCK
+        updated_message = "MOCK: Modified message"
+
+
+        # TODO: create a new commit object for target commit
+        tar_commit, tar_commit_hash = self.create_commit(*targ_ret_lib)
+        self.store_blob(tar_commit, tar_commit_hash)
+
+        # TODO: iterate thru all affected commits(childs) and
+        # create new commit obejct for each and make them point
+        # subsequentally from new target commit
+        # affected_commits.reverse() # place the modified commits child commit first
+        print(f"Affected reversed commits: {affected_commits}")
+
+        previous_commit_hash = None
+        targ_commit_placed_as_parent = False
+        for af_commit in affected_commits:
+            print(f"af commit: {af_commit}")
+            child_ret_lib = self.get_commit_attributes(af_commit.get("hash"))
+
+
+            if not targ_commit_placed_as_parent:
+                targ_ret_lib.update({"message": updated_message})
+                targ_ret_lib.update({"parent": tar_commit_hash}) # updating direct childs parent commit with the modified target commit
+                targ_commit_placed_as_parent = True
+            else:
+                child_commit, child_commit_hash = self.create_commit(*child_ret_lib)
+                self.store_blob(child_commit, child_commit_hash)
+
+            # print(f"Affected commits attributes: {ret_lib}")
+
+        # TODO: connect new commit object to commit history and remove old one
+
+        # TODO: use this for editing/ squassing, etc...
+        # tree_content = self._get_tree_content_from_commit_hash(commit)
+        # print(f"tree content: {tree_content}")
+        # files_and_hashes = self.read_tree_content(tree_content)
+        # print(f"read tree content: {files_and_hashes}")
+
+if __name__ == '__main__':
+    myv = MyVcs()
+    myv.interactive_rebase("aa199e07e20b758ad1b87846c5674d973a9dd559")
