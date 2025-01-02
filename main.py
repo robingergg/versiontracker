@@ -25,6 +25,8 @@ class MyVcs:
     vcs = ".vcs/"
     obj_path = os.path.join(vcs, "objects")
     curr_workdir = "/home/robin/programming/versiontracker/"
+    tmp_file = "tmp.txt"
+
 
     def log_msg(self, msg: str, op: str):
         if op == "i":
@@ -581,6 +583,7 @@ class MyVcs:
         with open(blob_path, "r") as f:
             content = f.read()
             content = content.split("\n")
+            content = [elem for elem in content if elem]
         f.close()
         
         message = None
@@ -594,12 +597,9 @@ class MyVcs:
             elif "message" in line:
                 message = " ".join(line.split(" ")[1:])
 
-            if not line:
-                # parent_comm = parent_commit
-                callback(all_comm, hash, all_msgs, message)
-                # callback(all_comm, parent_commit, all_msgs, message)
-                if parent_commit:
-                    self._read_hash(parent_commit, callback, all_comm, all_msgs)
+        callback(all_comm, hash, all_msgs, message)
+        if parent_commit:
+            self._read_hash(parent_commit, callback, all_comm, all_msgs)
 
     def get_blob_content(self, blob: Union[bytes, str]) -> bytes:
         """Gets any blob/hash, reads it and returns it's content."""
@@ -1095,7 +1095,7 @@ class MyVcs:
                         else:
                             print(f"No deviation found in file: {staged_file_name}")
 
-    def interactive_rebase(self, target_commit: str = None, is_target_included: bool = False) -> None:
+    def interactive_rebase(self, target_commit: str = None, is_target_included: bool = True) -> None:
         """
         Rebase to a specific commit.
         """
@@ -1106,39 +1106,37 @@ class MyVcs:
         affected_commits = []
         target_found = False
 
-        while not target_found:
-            for commit_obj in commit_tree:
-                if commit_obj["hash"] == target_commit:
-                    # go on
-                    target_found = True
+        for commit_obj in commit_tree:
+            print(f"commit obj: {commit_obj}")
+            if commit_obj["hash"] == target_commit:
+                target_found = True
 
-                    if is_target_included:
-                        affected_commits.append(commit_obj)
-
-                    break
-                
-                else:
-                    # append each commit until target commit
+                if is_target_included:
                     affected_commits.append(commit_obj)
+                break
+            
+            else:
+                # append each commit until target commit
+                affected_commits.append(commit_obj)
+        if not target_found:
+            print("Commit not found: ", target_commit)
+            return
 
         print(f"Affected commits: {affected_commits}")
 
         # 2.) open nano and write the selected commits
-        # TODO continue from here
-        tmp_file = "tmp.txt"
-        with open(tmp_file, "w") as f:
+        with open(MyVcs.tmp_file, "w") as f:
             for content in affected_commits:
                 f.write(f"pick {content["hash"]} {content["message"]}\n")
 
         try:
-            result = subprocess.run(["nano", tmp_file], check=True)
+            result = subprocess.run(["nano", MyVcs.tmp_file], check=True)
 
             if result.returncode == 0:
                 # 3.) read back the modified temp file
-                with open(tmp_file, "r") as f:
+                with open(MyVcs.tmp_file, "r") as f:
                     tmp_file_content = f.read()
                     print(f"tmp file content: \n{tmp_file_content}")
-                    # TODO: parse file output
                     tmp_file_content = tmp_file_content.split("\n") # split content based on newline
                     tmp_file_content = [content for content in tmp_file_content if content] # remove empty content
                     print(f"tmp file content: \n{tmp_file_content}")
@@ -1150,12 +1148,12 @@ class MyVcs:
                         if action == "r" or action == "reword":
                             self.interactive_reword(commit_hash, affected_commits)
 
-                    # TODO: do action according to file output
+                    # TODO: implement other features such as edit, squash, etc...
             else:
-                print("Nano closed unexpectedly.")
+                print("Error: Nano closed unexpectedly.")
         
         except FileNotFoundError:
-            print(f"File was not found: {tmp_file}, which is not supposed to happen...")
+            print(f"File was not found: {MyVcs.tmp_file}, which is not supposed to happen...")
         except Exception as e:
             print(f"Unexpected error happened: {e}")
 
@@ -1163,46 +1161,70 @@ class MyVcs:
         """
         Implementation of the reword function of
         git like version control system.
+
+        Params:
+            tar_commit (str): is the commit hash which we would like to reword.
+            affected_commits (list): contains all commits from target commit to the latest commit.
         """
-        # TODO: implement reword functionality
-        # commit_content = self.get_blob_content(commit)
-        # print(f"commit content: {commit_content}")
+        # place the target commit first so that when creating
+        # new sub commit opbjects we can delegate each child
+        # commit according to its parent accordingly
+        affected_commits.reverse()
+
         targ_ret_lib = self.get_commit_attributes(tar_commit)
-        print(f"commit content: {targ_ret_lib}")
 
-        # TODO: open an other nano interface to write modified commit message/ title
-        # MOCK
-        updated_message = "MOCK: Modified message"
+        # write the current commit message to file
+        with open(MyVcs.tmp_file, "w") as f:
+            f.write(targ_ret_lib["message"])
 
+        try:
+            # open an other nano interface to write modified commit message/ title
+            result = subprocess.run(["nano", MyVcs.tmp_file], check=True)
 
-        # TODO: create a new commit object for target commit
-        tar_commit, tar_commit_hash = self.create_commit(*targ_ret_lib)
-        self.store_blob(tar_commit, tar_commit_hash)
+            if result.returncode == 0:
+                # 3.) read back the modified temp file
+                with open(MyVcs.tmp_file, "r") as f:
+                    updated_message = f.read()
 
-        # TODO: iterate thru all affected commits(childs) and
-        # create new commit obejct for each and make them point
+            else:
+                print("Error: Nano closed unexpectedly.")
+        
+        except FileNotFoundError:
+            print(f"File was not found: {MyVcs.tmp_file}, which is not supposed to happen...")
+        except Exception as e:
+            print(f"Unexpected error happened: {e}")
+
+        # create new commit object for each and make them point
         # subsequentally from new target commit
-        # affected_commits.reverse() # place the modified commits child commit first
-        print(f"Affected reversed commits: {affected_commits}")
-
         previous_commit_hash = None
-        targ_commit_placed_as_parent = False
+        # targ_commit_placed_as_parent = False
         for af_commit in affected_commits:
-            print(f"af commit: {af_commit}")
+            print(f"\naf commit: {af_commit}")
             child_ret_lib = self.get_commit_attributes(af_commit.get("hash"))
 
-
-            if not targ_commit_placed_as_parent:
+            # create a new commit object for target commit
+            if af_commit.get("hash") == tar_commit:
+                # updating the commit message in the dict
                 targ_ret_lib.update({"message": updated_message})
-                targ_ret_lib.update({"parent": tar_commit_hash}) # updating direct childs parent commit with the modified target commit
-                targ_commit_placed_as_parent = True
+                # then create a new commit object with the updated message
+                tar_commit, tar_commit_hash = self.create_commit(*targ_ret_lib.values())
+                self.store_blob(tar_commit, tar_commit_hash)
+                previous_commit_hash = tar_commit_hash
+                continue
+
             else:
-                child_commit, child_commit_hash = self.create_commit(*child_ret_lib)
+                # setting the parent attribute, using the previous commit hash
+                child_ret_lib.update({"parent": previous_commit_hash}) 
+                child_commit, child_commit_hash = self.create_commit(*child_ret_lib.values())
                 self.store_blob(child_commit, child_commit_hash)
+                # setting the current hash to the previous commit hash attribute
+                previous_commit_hash = child_commit_hash 
 
-            # print(f"Affected commits attributes: {ret_lib}")
+        self.update_latest_commit_in_curr_branch(previous_commit_hash)
 
-        # TODO: connect new commit object to commit history and remove old one
+        print(f"New commit tree:\n")
+        self.display_commit_tree()
+
 
         # TODO: use this for editing/ squassing, etc...
         # tree_content = self._get_tree_content_from_commit_hash(commit)
@@ -1212,4 +1234,4 @@ class MyVcs:
 
 if __name__ == '__main__':
     myv = MyVcs()
-    myv.interactive_rebase("aa199e07e20b758ad1b87846c5674d973a9dd559")
+    myv.interactive_rebase("b342aa25ff2783a98e978bf60b76278cf07a32de")

@@ -35,6 +35,9 @@ reset_hard_parser.add_argument('-c', '--commit')
 reset_soft_parser = cmd2.Cmd2ArgumentParser()
 reset_soft_parser.add_argument('-c', '--commit')
 
+interactive_rebase_parser = cmd2.Cmd2ArgumentParser()
+interactive_rebase_parser.add_argument('-c', '--commit')
+
 untracked_parser = cmd2.Cmd2ArgumentParser()
 
 
@@ -119,6 +122,10 @@ class MainVcs(cmd2.Cmd):
     def do_show_file_difference(self, args):
         # file_names = [filename for filename in args.filenames]
         vcs.show_staged_difference(args.filenames)
+
+    @cmd2.with_argparser(interactive_rebase_parser)
+    def do_interactive_rebase(self, args):
+        vcs.interactive_rebase(args.commit)
 
 
 file_1 = "foo.txt"
