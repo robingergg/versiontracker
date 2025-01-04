@@ -1,4 +1,5 @@
 from main import *
+from main import _empty_detached_state
 import cmd2
 import shutil
 
@@ -38,6 +39,8 @@ reset_soft_parser.add_argument('-c', '--commit')
 interactive_rebase_parser = cmd2.Cmd2ArgumentParser()
 interactive_rebase_parser.add_argument('-c', '--commit')
 
+continue_rebase_parser = cmd2.Cmd2ArgumentParser()
+
 untracked_parser = cmd2.Cmd2ArgumentParser()
 
 
@@ -65,6 +68,7 @@ class MainVcs(cmd2.Cmd):
             shutil.rmtree(MyVcs.vcs)
         else:
             print(f"There is no such path to remove: {MyVcs.vcs}")
+        _empty_detached_state()
 
     @cmd2.with_argparser(stage_parser)
     def do_stage_files(self, args):
@@ -126,6 +130,14 @@ class MainVcs(cmd2.Cmd):
     @cmd2.with_argparser(interactive_rebase_parser)
     def do_interactive_rebase(self, args):
         vcs.interactive_rebase(args.commit)
+
+    @cmd2.with_argparser(continue_rebase_parser)
+    def do_continue_rebase(self, args):
+        vcs.continue_rebase()
+
+    def postloop(self):
+        super().postloop()
+        _empty_detached_state()
 
 
 file_1 = "foo.txt"
