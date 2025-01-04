@@ -18,11 +18,39 @@ vcs.make_commit()
 """
 
 all_commit = []
+detached = False
+latest_detached_commit_hash = None
+
+def _set_detached():
+    global detached
+    detached_path = os.path.join(".vcs/refs", "detached")
+    if os.path.exists(detached_path):
+        with open(detached_path, "r") as f:
+            stored = f.read()
+            if stored:
+                detached = True
+            else:
+                detached = False
+    print(f"Detach set to: {detached}")
+
+def _empty_detached_state():
+    global detached
+    try:
+        with open(os.path.join(MyVcs.detached_path), "w") as f:
+            f.write("")
+            print("DETACHED file emptied...")
+    except Exception as e:
+        print(e)
+    _set_detached()
+
+_set_detached()
 
 
 class MyVcs:
 
     vcs = ".vcs/"
+    refs_path = os.path.join(vcs, "refs")
+    detached_path = os.path.join(refs_path, "detached")
     obj_path = os.path.join(vcs, "objects")
     curr_workdir = "/home/robin/programming/versiontracker/"
     tmp_file = "tmp.txt"
@@ -114,13 +142,13 @@ class MyVcs:
         if not os.path.exists(dir_path):
             os.mkdir(dir_path)
         else:
-            print(f"Error: path exists: {dir_path}")
+            print(f"Warning: path exists: {dir_path}")
 
         # 3. save to objects dir
         with open(blob_path, 'wb') as f:
             f.write(content)
 
-    def create_tree(self, files):
+    def create_tree(self, files: list):
         """ 
         Createsa tree object.
         Create this foramt:
@@ -625,6 +653,12 @@ class MyVcs:
         all_comm = []
         all_msgs = []
         commit_lib = []
+        detached_head_commit_hash = None
+
+        # Read detached file content
+        if os.path.exists(MyVcs.detached_path):
+            with open(MyVcs.detached_path, "r") as f:
+                detached_head_commit_hash = f.read()
 
         def collect_commits(all_comm, commit, all_msgs, msg):
             all_comm.append(commit)
@@ -633,6 +667,9 @@ class MyVcs:
         curr_commit_id = self.get_commit_id_from_curr_branch()
         self._read_hash(curr_commit_id, collect_commits, all_comm, all_msgs)
 
+        print(f"ALL COMM: {all_comm}")
+        print(f"detached: {detached}")
+
         for i in range(0, len(all_comm)):
             commit = all_comm[i]
             msg = all_msgs[i]
@@ -640,9 +677,23 @@ class MyVcs:
             # building hash lib as a return value if requested
             commit_lib.append({"hash": commit, "message": msg})
 
+            # if in detached mode and current commit is the
+            # detached one then dispaly accordingly
+            if detached:
+                if commit == detached_head_commit_hash:
+                    print(f"{commit} - {msg} -- detached HEAD")
+                    continue
+
             if commit == curr_commit_id:
-                print(f"{commit} - {msg} <- HEAD")
-            else:
+                if detached:
+                    print(f"{commit} - {msg}")
+                else:
+                    # only print "main" HEAD if not in detached state
+                    print(f"{commit} - {msg} <- HEAD")
+
+            # Display rest of the commits
+            if commit != curr_commit_id:
+            # if commit != curr_commit_id and not detached:
                 print(f"{commit} - {msg}")
 
         if ret_data:
@@ -668,28 +719,97 @@ class MyVcs:
         """
         Gets the latest commit and it's content
         """
-        latest_commit = self.get_branch_latest_commit(self.get_current_branch())
+        global latest_detached_commit_hash
+
+        target_commit = None
+        parent_commit = None
+        ret_lib = None
+        
+        # if state is not detached then get the parent
+        # commit based on the latest commits parent
+        if not detached:
+            latest_commit = self.get_branch_latest_commit(self.get_current_branch())
+            parent_commit = latest_commit.get("parent")
+            print(f"Parent commit set - NOT DETACHED MODE: {parent_commit}")
+        else:
+            # if state is detached then get the parent commit
+            # based on the target commit (the one we would like to ammend)
+            target_commit = self._get_detached_commit() # target, aka detached commit
+            targ_commit_attr = self.get_commit_attributes(target_commit)
+            parent_commit = targ_commit_attr.get("parent")
+            print(f"Parent commit set - DETACHED MODE: {parent_commit}")
+
+        # set None if parent is stored as "None" (if stored as string) 
+        parent_commit = None if parent_commit == "None" or parent_commit else parent_commit 
+
+        # if there is parent commit then get all of its
+        # attributes and extract message from previous
+        # commit if no message specified
+        if parent_commit:
+            ret_lib = self.get_commit_attributes(parent_commit)
 
         index_content = self._get_staged()
         index_content = self._organize_index_content_into_nested_list(index_content)
-
-        # get the current latest commits attribute to update the new ammended commit with it
-        ret_lib = self.get_commit_attributes(latest_commit)
-        
         # create a new tree object
         tree, tree_blob = self.create_tree(index_content)
         self.store_blob(tree, tree_blob)
 
         # if got new message, assign it
-        if not message:
+        if not message and ret_lib:
             message = ret_lib.get("message")
 
         # create a new commit object
-        commit, commit_hash = self.create_commit(hashed_tree=tree_blob, parent_commit=ret_lib.get("parent"), msg=message)
+        commit, commit_hash = self.create_commit(hashed_tree=tree_blob,
+                                                 parent_commit=parent_commit,
+                                                 msg=message)
         self.store_blob(commit, commit_hash)
 
-        # update current branch with the latest commit
-        self.update_latest_commit_in_curr_branch(commit_hash)
+        if not detached:
+            # update current branch with the latest commit
+            print("Updated latest commit ID")
+            self.update_latest_commit_in_curr_branch(commit_hash)
+        else:
+            if not target_commit:
+                print("Error: there is no target commit. Unexpected error.")
+                return
+            
+            # create new commits for each subsequent commit under target commit
+            affected_commits = self.get_affected_commits(target_commit, is_target_included=True)
+            affected_commits.reverse()
+
+            previous_commit_hash = commit_hash
+            for i in range(1, len(affected_commits)):
+                aff_commit = affected_commits[i]
+                aff_commit_attr = self.get_commit_attributes(aff_commit.get("hash"))
+
+                # setting the parent attribute, using the previous commit hash
+                aff_commit_attr.update({"parent": previous_commit_hash}) 
+                # creating "child" commit
+                child_commit, child_commit_hash = self.create_commit(*aff_commit_attr.values())
+                self.store_blob(child_commit, child_commit_hash)
+
+                # setting the current hash to the previous commit hash attribute
+                previous_commit_hash = child_commit_hash 
+            
+            # saving the most latest hash as global value so we can
+            # use it when finishing rebasing with continue_rebase()
+            latest_detached_commit_hash = previous_commit_hash
+
+    def continue_rebase(self):
+        if not detached:
+            print("Warning: not in detached state...")
+            return
+        
+        detached_commit = self._get_detached_commit()
+        print(f"Detached commit: {detached_commit}")
+        self.update_latest_commit_in_curr_branch(latest_detached_commit_hash)
+
+        curr_branch = self.get_current_branch()
+        current_commit_id = self.get_commit_id_from_curr_branch()
+        print(f"Current commit id: {current_commit_id} on branch: {curr_branch}")
+
+        _empty_detached_state()
+
 
     def _organize_index_content_into_nested_list(self, index_content) -> list[list[str]]:
         """
@@ -916,7 +1036,7 @@ class MyVcs:
 
     def _get_content_from_blob(self, blob: str) -> str:
         """
-        Returns the actual contnet of a blob (file).
+        Returns the actual content of a blob (file).
         """
         indicator = blob.split(b"\x00")[0]
         blob_type = indicator.split(b" ")[0]
@@ -1099,30 +1219,17 @@ class MyVcs:
         """
         Rebase to a specific commit.
         """
-        # 1.) get all the commit hash and message between
-        # latest commit and target commit 
-        commit_tree = self.display_commit_tree(ret_data=True)
-        
-        affected_commits = []
-        target_found = False
-
-        for commit_obj in commit_tree:
-            print(f"commit obj: {commit_obj}")
-            if commit_obj["hash"] == target_commit:
-                target_found = True
-
-                if is_target_included:
-                    affected_commits.append(commit_obj)
-                break
-            
-            else:
-                # append each commit until target commit
-                affected_commits.append(commit_obj)
-        if not target_found:
-            print("Commit not found: ", target_commit)
+        staged_content = self._get_staged()
+        if staged_content:
+            print("Add or stash your changes before rebasing...")
+            return
+        if detached:
+            print("Already rebasing...")
             return
 
-        print(f"Affected commits: {affected_commits}")
+        # 1.) get all the commit hash and message between
+        # latest commit and target commit 
+        affected_commits = self.get_affected_commits(target_commit, is_target_included)
 
         # 2.) open nano and write the selected commits
         with open(MyVcs.tmp_file, "w") as f:
@@ -1148,6 +1255,9 @@ class MyVcs:
                         if action == "r" or action == "reword":
                             self.interactive_reword(commit_hash, affected_commits)
 
+                        elif action == "e" or action == "edit":
+                            self.interactive_edit(commit_hash, affected_commits)
+
                     # TODO: implement other features such as edit, squash, etc...
             else:
                 print("Error: Nano closed unexpectedly.")
@@ -1156,6 +1266,36 @@ class MyVcs:
             print(f"File was not found: {MyVcs.tmp_file}, which is not supposed to happen...")
         except Exception as e:
             print(f"Unexpected error happened: {e}")
+
+    def get_affected_commits(self, target_commit: str,
+                             is_target_included: bool) -> list:
+        """
+        Collects all subsequent (child) commits of a target commit,
+        and returns thhem in a list.
+        """
+        commit_tree = self.display_commit_tree(ret_data=True)
+        
+        affected_commits = []
+        target_found = False
+
+        for commit_obj in commit_tree:
+            print(f"commit obj: {commit_obj}")
+            if commit_obj["hash"] == target_commit:
+                target_found = True
+
+                if is_target_included:
+                    affected_commits.append(commit_obj)
+                break
+            
+            else:
+                # append each commit until target commit
+                affected_commits.append(commit_obj)
+        if not target_found:
+            print("Commit not found: ", target_commit)
+            return
+
+        print(f"Affected commits: {affected_commits}")
+        return affected_commits
 
     def interactive_reword(self, tar_commit: str, affected_commits: list):
         """
@@ -1232,6 +1372,52 @@ class MyVcs:
         # files_and_hashes = self.read_tree_content(tree_content)
         # print(f"read tree content: {files_and_hashes}")
 
+    def interactive_edit(self, commit: str, af_commits: list):
+
+        # apply the state of the selected commit of all files
+        tree_content = self._get_tree_content_from_commit_hash(commit)
+        print(f"tree content: {tree_content}")
+        files_and_hashes = self.read_tree_content(tree_content)
+        print(f"read tree content: {files_and_hashes}")
+
+        for block in files_and_hashes:
+            file_name = block[0]
+            file_hash = block[1]
+            print(file_hash)
+            file_content = self.get_blob_content(file_hash)
+            file_content = self._get_content_from_blob(file_content)
+            print(file_content)
+
+            # update files content based on the selected commits content
+            with open(file_name, "w") as f:
+                f.write(file_content.decode())
+
+        self._create_detached_head_state(commit)
+        print("DETACHED head state created...")
+        self.display_commit_tree()
+
+    def _create_detached_head_state(self, commit: str):
+        """
+        Creates a detached head state by creating detached
+        reference file and writing target commit in it.
+        """
+        global detached
+        detached = True
+        with open(os.path.join(MyVcs.detached_path), "w") as f:
+            f.write(commit)
+            print(f"DETACHED updated to commit: {commit}")
+
+    def _get_detached_commit(self) -> str:
+        """
+        Returns the content of detached reference.
+        """
+        if os.path.exists(MyVcs.detached_path):
+            with open(MyVcs.detached_path, "r") as f:
+                return f.read()
+            
+
+
+
 if __name__ == '__main__':
     myv = MyVcs()
-    myv.interactive_rebase("b342aa25ff2783a98e978bf60b76278cf07a32de")
+    myv.interactive_rebase("971853219ab8ac26e8dd0c7a1a2b5e7e1fb61aa3")
