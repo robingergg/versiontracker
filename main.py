@@ -456,18 +456,32 @@ class MyVcs:
             if not index_content:
                 print("Nothing to commit.")
                 return
-            
-        current_commit_content = self.get_all_files_and_hashes_in_commit(self.get_branch_latest_commit(self.get_current_branch()))
+        # pre-processing index data
+        index_content = [line.strip() for line in index_content]
+        # process string to file name and blob hash
+        index_content = [[line.split()[0], line.split()[1]] for line in index_content]
+
+        # exctract the direct parent commit. If we do a regular commit it will be the latest commit as usual,
+        # but if we are in detached mode, meaning we are doing a commit while rebasing,
+        # then the direct parent of the newly created commit will be the target commit.
+        direct_parent_commit = None
+        if detached:
+            # append index area content to a new tree object and commit with it - make its parent the target commit - detached commit
+            direct_parent_commit = self._get_detached_commit()
+            new_commit_parent = direct_parent_commit
+        else:
+            direct_parent_commit = self.get_branch_latest_commit(self.get_current_branch())
+            new_commit_parent = direct_parent_commit
+
+        # get latest commits content and append it to the newly created commit            
+        current_commit_content = self.get_all_files_and_hashes_in_commit(direct_parent_commit)
+        # current_commit_content = self.get_all_files_and_hashes_in_commit(self.get_branch_latest_commit(self.get_current_branch()))
         # if current commit content is mepty (initial commit) then make it an empty list
         if not current_commit_content:
             current_commit_content = []
 
         # removing new line command from content
         current_commit_content = [[line.strip("\n") for line in block] for block in current_commit_content]
-
-        index_content = [line.strip() for line in index_content]
-        # process string to file name and blob hash
-        index_content = [[line.split()[0], line.split()[1]] for line in index_content]
 
         # check if a given file is in the current commit content, and if so,
         # remove it and append the staged version instead.
@@ -480,16 +494,24 @@ class MyVcs:
         tree, hashed_tree = self.create_tree(cleaned_entries)
         self.store_blob(tree, hashed_tree)
 
-        latest_commit = self.get_commit_id_from_curr_branch()
-        commit, hashed_commit = self.create_commit(hashed_tree, parent_commit=latest_commit, msg=message)
+        commit, hashed_commit = self.create_commit(hashed_tree, parent_commit=new_commit_parent, msg=message)
         self.store_blob(commit, hashed_commit)
 
+        # if in detached state then re-create all subsequent commits
+        # and update latest commit to the new latest commit
+        if detached:
+            self.update_all_subsequent_commits(direct_parent_commit, hashed_commit)
+            hashed_commit = latest_detached_commit_hash
+
         # empty staging area
-        with open(f"{MyVcs.vcs}/index", "w") as f:
-            f.write("")
+        self._empty_staging_area()
 
         # update latest commit in curr branch
         self.update_latest_commit_in_curr_branch(hashed_commit)
+
+    def _empty_staging_area(self):
+        with open(f"{MyVcs.vcs}/index", "w") as f:
+            f.write("")
 
     def _read_tree_obj(self, tree: Union[list[bytes, str]]) -> list[list]:
         """
@@ -740,7 +762,7 @@ class MyVcs:
             print(f"Parent commit set - DETACHED MODE: {parent_commit}")
 
         # set None if parent is stored as "None" (if stored as string) 
-        parent_commit = None if parent_commit == "None" or parent_commit else parent_commit 
+        parent_commit = None if parent_commit == "None" else parent_commit 
 
         # if there is parent commit then get all of its
         # attributes and extract message from previous
@@ -763,6 +785,7 @@ class MyVcs:
                                                  parent_commit=parent_commit,
                                                  msg=message)
         self.store_blob(commit, commit_hash)
+        print(f"Created commit during ammend: {commit}\nhash: {commit_hash}")
 
         if not detached:
             # update current branch with the latest commit
@@ -794,14 +817,58 @@ class MyVcs:
             # saving the most latest hash as global value so we can
             # use it when finishing rebasing with continue_rebase()
             latest_detached_commit_hash = previous_commit_hash
+            self._empty_staging_area()
+
+    def update_all_subsequent_commits(self, target_commit: str, newly_created_commit: str) -> None:
+        """
+        Retrieves all affected commit to a target commit and re-creates all subsequent commit,
+        also updates the 'latest_detached_commit_hash' attribute.
+
+        Params:
+            - target_commit (str): commit which we want to execute the rebase on,
+            for example when doing an interactive rebase and we'd
+            like to edit a commit 'x', then target_commit is commit 'x'.
+            - newly_created_commit (str): latest commit which we created.
+            In the case of an interactive rebase usign edit option this will
+            be the new commit which we insert it on top of the target commit.
+        """
+        global latest_detached_commit_hash
+
+        affected_commits = self.get_affected_commits(target_commit, is_target_included=True)
+        affected_commits.reverse()
+
+        print(f"Affected commit: {affected_commits}")
+
+        previous_commit_hash = newly_created_commit
+        for i in range(1, len(affected_commits)):
+            aff_commit = affected_commits[i]
+            aff_commit_attr = self.get_commit_attributes(aff_commit.get("hash"))
+
+            # setting the parent attribute, using the previous commit hash
+            aff_commit_attr.update({"parent": previous_commit_hash}) 
+            # creating "child" commit
+            child_commit, child_commit_hash = self.create_commit(*aff_commit_attr.values())
+            self.store_blob(child_commit, child_commit_hash)
+
+            # setting the current hash to the previous commit hash attribute
+            previous_commit_hash = child_commit_hash 
+        
+        # saving the most latest hash as global value so we can
+        # use it when finishing rebasing with continue_rebase()
+        latest_detached_commit_hash = previous_commit_hash
+        print(f"Updated latest detached commit: {latest_detached_commit_hash}")
 
     def continue_rebase(self):
         if not detached:
             print("Warning: not in detached state...")
             return
+        if not latest_detached_commit_hash:
+            print("There are no committed modifications. Use ammend or commit your changes if there is any.")
+            return
         
         detached_commit = self._get_detached_commit()
         print(f"Detached commit: {detached_commit}")
+        print(f"latest_detached_commit_hash: {latest_detached_commit_hash}")
         self.update_latest_commit_in_curr_branch(latest_detached_commit_hash)
 
         curr_branch = self.get_current_branch()
