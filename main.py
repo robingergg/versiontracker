@@ -54,6 +54,7 @@ class MyVcs:
     obj_path = os.path.join(vcs, "objects")
     curr_workdir = "/home/robin/programming/versiontracker/"
     tmp_file = "tmp.txt"
+    index_path = os.path.join(vcs, "index")
 
 
     def log_msg(self, msg: str, op: str):
@@ -239,8 +240,11 @@ class MyVcs:
         if not self._target_exists(blob_path):
             self.store_blob(blob, hashed_blob)
         else:
-            print(f"No changes made to: {file}")
-            return
+            if detached:
+                pass
+            else:
+                print(f"No changes made to: {file}")
+                return
 
         curr_idx = f"{file} {hashed_blob}"
 
@@ -261,10 +265,29 @@ class MyVcs:
         """
         Shows the modified files in the repository based on the current branch.
         """
+        current_commit = None
+
+        detached_commit = self._get_detached_commit()
+        print(f"DETACHED COMMIT: {detached_commit}")
+
+
+        if detached_commit:
+            tree_cot = self.get_tree_hash_from_commit(detached_commit)
+            print("tree cot: ", tree_cot)
+
+            tree_content_detached = self._get_tree_content_from_commit_hash(detached_commit)
+            print(f"TREE CONTENT DETACHED: {tree_content_detached}")
+
         latest_commit = self.get_branch_latest_commit(self.get_current_branch())
 
-        if latest_commit:
-            ret_lib = self.get_commit_attributes(latest_commit)
+        print(f"Lates commit: {latest_commit}")
+
+        current_commit = detached_commit if detached_commit else latest_commit 
+        print(f"Current commit: {current_commit}")
+
+        if current_commit:
+            ret_lib = self.get_commit_attributes(current_commit)
+            print("RET IG: ", ret_lib)
             self.show_modified_objects(ret_lib.get("tree"))
         else:
             print("Error: no latest commit.")
@@ -314,7 +337,7 @@ class MyVcs:
         if not tree_hash:
             print("No tree hash. Return...")
             return
-
+        
         modified_files = []
 
         dir_path = tree_hash[:2]
@@ -322,13 +345,12 @@ class MyVcs:
         tree_path = os.path.join(MyVcs.obj_path, dir_path, file_path)
         
         all_dirs, all_files = self._get_all_dirs_and_files_in_repo()
-
+        
         with open(tree_path, "rb") as f:
             tree_content = f.read()
             tree_content = tree_content.split(b'\x00', 1)
             if b"tree" in tree_content[0]:
                 tree_content = tree_content[1:][0].split(b'\n')
-
             for i in range(len(tree_content)):
                 split_tree_cont = tree_content[i]
                 if not split_tree_cont:
@@ -338,11 +360,10 @@ class MyVcs:
                 stored_hash = split_tree_cont[1]
                 if isinstance(file, list) and len(file) > 1:
                     file = file[1]
-                    
+
                 if file in all_files: 
-                    # stored_hash = tree_content[i+1].strip().decode('utf-8')
                     curr_hash = self.create_file_blob(file)[1]
-                    
+
                     if stored_hash != curr_hash:
                         index_content = self._get_staged()
                     
@@ -862,7 +883,20 @@ class MyVcs:
         if not detached:
             print("Warning: not in detached state...")
             return
+        
+        staged_content = self._get_staged()
+        mod_files = None
+
+        # if there is not latest detached head means there was no rebase previously
         if not latest_detached_commit_hash:
+            detached_tree_hash = self.get_tree_hash_from_commit(self._get_detached_commit())
+            mod_files = self.show_modified_objects(detached_tree_hash, ret_files=True)
+            if not staged_content and not mod_files:
+                commit_id = self.get_commit_id_from_curr_branch()
+                self.update_latest_commit_in_curr_branch(commit_id)
+                _empty_detached_state()
+                print(f"Head updated to: {commit_id}")
+                return
             print("There are no committed modifications. Use ammend or commit your changes if there is any.")
             return
         
@@ -871,11 +905,23 @@ class MyVcs:
         print(f"latest_detached_commit_hash: {latest_detached_commit_hash}")
         self.update_latest_commit_in_curr_branch(latest_detached_commit_hash)
 
+        # update repository state to the latest commit
+        self._update_repo_state_by_commit(latest_detached_commit_hash)
+
         curr_branch = self.get_current_branch()
         current_commit_id = self.get_commit_id_from_curr_branch()
         print(f"Current commit id: {current_commit_id} on branch: {curr_branch}")
 
         _empty_detached_state()
+
+    def _update_repo_state_by_commit(self, commit_hash: str) -> None:
+        """
+        Updates all files content based on the given commit.
+        """
+        all_file_content = self._get_commits_all_file_content(commit_hash)
+        for file_block in all_file_content:
+            with open(file_block[0], "wb") as f:
+                f.write(file_block[1])
 
 
     def _organize_index_content_into_nested_list(self, index_content) -> list[list[str]]:
@@ -919,13 +965,24 @@ class MyVcs:
         #     commit_hash_1 = parent_commit_of_current_commit
         #     commit_hash_2 = current_commit_id
 
-        # if file name(s) given then get the list of modified files
+        latest_tree_hash = None
         if file_names:
-            modified_files = self.show_modified_objects(self._get_latest_tree_hash(), ret_files=True)
+            if detached:
+                detached_commit = self._get_detached_commit()
+                latest_tree_hash = self.get_tree_hash_from_commit(detached_commit)
+            else:
+                latest_tree_hash = self._get_latest_tree_hash()
 
+            modified_files = self.show_modified_objects(latest_tree_hash, ret_files=True)
+
+            all_files_content = None
+            if detached:
+                all_files_content = self._get_commits_all_file_content(detached_commit)
+            else:
+                all_files_content = self._get_current_commit_all_file_content()
             # then get the content of the files from latest commit vs
             # the content currently is and compare to display
-            all_files_content = self._get_current_commit_all_file_content()
+            
             for file in modified_files:
                 for content_block in all_files_content:
                     if content_block[0] == file:
@@ -1196,7 +1253,7 @@ class MyVcs:
         files_content = self.read_content_of_files(files_and_hashes)
         return files_content
     
-    def _get_commits_all_file_content(self, commit_id: str):
+    def _get_commits_all_file_content(self, commit_id: str) -> list[list[str, str]]:
         """
         Returns all file names and their hashes from selected commit.
         """
@@ -1472,7 +1529,7 @@ class MyVcs:
         detached = True
         with open(os.path.join(MyVcs.detached_path), "w") as f:
             f.write(commit)
-            print(f"DETACHED updated to commit: {commit}")
+            print(f"Commit: {commit} updated in DETACHED")
 
     def _get_detached_commit(self) -> str:
         """
@@ -1482,7 +1539,88 @@ class MyVcs:
             with open(MyVcs.detached_path, "r") as f:
                 return f.read()
             
+    def restore(self, files: list, staging: bool = False):
+        """
+        Restores the selected modified files from
+        repository and or from staging area.
+        """
+        restored_files = []
+        content_of_files = None
 
+        # TODO Implement "." !
+        # to restore everything in case of dot,
+        # both in staging and "normal restore"
+
+        # TODO: when in detached state on a commit, restore to the
+        # detached/ target commits content when wnat to restore modified files
+
+
+
+        if not files:
+            print("No file(s) given to retore...")
+            return
+
+        # TODO: if staging is set, then do the same
+        # except reset files from stage to modified
+        if staging:
+            print("Restore staged file(s)...")
+
+            # 1.) read files content from staged
+            stash_content_obj = self._get_staged()
+            print("stash OBJ: ", stash_content_obj)
+            stash_content = self._organize_index_content_into_nested_list(stash_content_obj)
+            print("stash CONT: ",stash_content)
+
+            stash_content = self.read_content_of_files(stash_content)
+            print(stash_content)
+
+            
+            # 2.) write value to files
+
+            for file_block in stash_content:
+                with open(file_block[0], "w") as f:
+                    f.write(file_block[1].decode())
+                    restored_files.append(file_block[0])
+            
+            # empty staging area
+            self._empty_staging_area()
+
+            print("Restored files:")
+            for file in restored_files:
+                print(file)
+
+            return
+
+        # 1.) iterate thru given file list
+        for file in files:
+            latest_tree_hash = self._get_latest_tree_hash()
+            mod_file = self.show_modified_objects(latest_tree_hash, True)
+
+            # if selected file in the list of modified files then go on
+            if file in mod_file:
+                # 2.) get files state from last commit
+                latest_tree_content_obj = self._get_tree_content_from_commit_hash \
+                                          (self.get_branch_latest_commit(self.get_current_branch()))
+                # 3.) extract its content
+                latest_tree_content = self.read_tree_content(latest_tree_content_obj)
+                content_of_files = self.read_content_of_files(latest_tree_content)
+                
+            else:
+                print(f"Selected file: {file} not modified, nothing to restore...")
+                return
+            
+        # 4.) write content to file
+        for file in content_of_files:
+            print(f"FILE CONT: {file}")
+            with open(file[0], "w") as f:
+                f.write(file[1].decode())
+                # add restore file name to collect and display at the end
+                restored_files.append(file[0])
+
+        # display restored files
+        print("Restored files:")
+        for file in restored_files:
+            print(file)
 
 
 if __name__ == '__main__':
