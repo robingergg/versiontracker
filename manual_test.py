@@ -41,6 +41,10 @@ interactive_rebase_parser.add_argument('-c', '--commit')
 
 continue_rebase_parser = cmd2.Cmd2ArgumentParser()
 
+restore_parser = cmd2.Cmd2ArgumentParser()
+restore_parser.add_argument('-f', '--files')
+restore_parser.add_argument('-s', '--staged', action="store_true")
+
 untracked_parser = cmd2.Cmd2ArgumentParser()
 
 
@@ -134,6 +138,11 @@ class MainVcs(cmd2.Cmd):
     @cmd2.with_argparser(continue_rebase_parser)
     def do_continue_rebase(self, args):
         vcs.continue_rebase()
+
+    @cmd2.with_argparser(restore_parser)
+    def do_restore(self, args):
+        files = args.files.split(" ")
+        vcs.restore(files, args.staged)
 
     def postloop(self):
         super().postloop()
