@@ -242,9 +242,6 @@ class MyVcs:
         else:
             if detached:
                 pass
-            else:
-                print(f"No changes made to: {file}")
-                return
 
         curr_idx = f"{file} {hashed_blob}"
 
@@ -368,12 +365,8 @@ class MyVcs:
                         index_content = self._get_staged()
                     
                         if index_content:
-                            for idx_cont in index_content:
-                                in_index = False
-                                if file in idx_cont:
-                                    in_index = True
-                                if not in_index:
-                                    modified_files.append(file)
+                            if self._file_in_index(file, index_content):
+                                modified_files.append(file)
                         else:
                             modified_files.append(file)
         
@@ -383,6 +376,13 @@ class MyVcs:
         print("Modified files:")
         for file in modified_files:
             print(file)
+
+    def _file_in_index(self, file_name: str, index_content: list) -> bool:
+        for indx_content_block in index_content:
+            if file_name in indx_content_block:
+                return False
+        return True
+
         
     def _get_all_dirs_and_files_in_repo(self) -> tuple:
         """
@@ -965,16 +965,22 @@ class MyVcs:
         #     commit_hash_1 = parent_commit_of_current_commit
         #     commit_hash_2 = current_commit_id
 
-        latest_tree_hash = None
+        curr_working_tree_hash = None
         if file_names:
+
             if detached:
                 detached_commit = self._get_detached_commit()
-                latest_tree_hash = self.get_tree_hash_from_commit(detached_commit)
+                curr_working_tree_hash = self.get_tree_hash_from_commit(detached_commit)
             else:
-                latest_tree_hash = self._get_latest_tree_hash()
+                curr_working_tree_hash = self._get_latest_tree_hash()
 
-            modified_files = self.show_modified_objects(latest_tree_hash, ret_files=True)
+            modified_files = self.show_modified_objects(curr_working_tree_hash, ret_files=True)
+            
+            # if "." is given then collect all modified objects/ files
+            if file_names[0] == ".":
+                file_names = modified_files
 
+            print("MOD FILES: ", modified_files)
             all_files_content = None
             if detached:
                 all_files_content = self._get_commits_all_file_content(detached_commit)
@@ -985,11 +991,11 @@ class MyVcs:
             
             for file in modified_files:
                 for content_block in all_files_content:
-                    if content_block[0] == file:
+                    if content_block[0] == file and file in file_names:
                         file_content = self._get_file_current_content(content_block[0])
                         saved_file_content = content_block[1].decode()
                         curr_file_content = file_content.decode()
-                        self._dispaly_file_content_diff(saved_file_content, curr_file_content)
+                        self._display_file_content_diff(saved_file_content, curr_file_content)
             return
 
         if commit_hash_1 == commit_hash_2:
@@ -1027,7 +1033,7 @@ class MyVcs:
         ret_lib = self.get_commit_attributes(latest_commit)
         return ret_lib.get("tree")
 
-    def _dispaly_file_content_diff(self, last_content: str, current_content: str) -> str:
+    def _display_file_content_diff(self, last_content: str, current_content: str) -> str:
         """
         Compares two files line by line and returns difference.
         """
@@ -1101,7 +1107,7 @@ class MyVcs:
                     file_content_2 = self.get_content_by_file_name_from_block(file_name_1, files_content_info_2)
                     if file_content_1 != file_content_2:
                         print()
-                        self._dispaly_file_content_diff(file_content_1.decode(), file_content_2.decode())
+                        self._display_file_content_diff(file_content_1.decode(), file_content_2.decode())
                 
                 # filter out each file which has been processed
                 files_content_info_2 = [
@@ -1299,11 +1305,18 @@ class MyVcs:
             return stored_parent_commit
         print(f"No parent commit of commit: {commit_id}")
 
-    def show_staged_difference(self):
+    def show_staged_difference(self, files: list[str] = ".") -> None:
         """
         Dispalys the difference in one or more files.
         """
+            
+
         staged_content = self._get_staged()
+        
+        
+        if files != ".":
+            staged_content = [staged_file_block for given_file_name in files for staged_file_block \
+                              in staged_content if given_file_name in staged_file_block] 
 
         # get current content and compare with staged
         latest_tree_hash = self._get_latest_tree_hash()
@@ -1329,7 +1342,7 @@ class MyVcs:
 
                         # compare the two and display deviation if there is any
                         if latest_file_content != files_content:
-                            self._dispaly_file_content_diff(latest_file_content.decode(), files_content.decode())
+                            self._display_file_content_diff(latest_file_content.decode(), files_content.decode())
                         # this shall not happend since this part of the code
                         # will only be called if there is staged content 
                         else:
@@ -1437,7 +1450,7 @@ class MyVcs:
 
         diff = self.read_commit_differences(squashing_commit, parent_commit)
 
-        # TODO use search_for_block_difference() to retur ndifference in lines
+        # TODO use search_for_block_difference() to return difference in lines
         print(f"PARENT COMM: {parent_commit}, squahing commit: {squashing_commit}")
         print("DIFF: ", diff)
         
@@ -1604,39 +1617,59 @@ class MyVcs:
         Restores the selected modified files from
         repository and or from staging area.
         """
+        global detached
+
         restored_files = []
         content_of_files = None
+        detached_commit = None
+        tree_hash = None
+        curr_working_tree_content_obj = None
 
-        # TODO Implement "." !
-        # to restore everything in case of dot,
-        # both in staging and "normal restore"
-
-        # TODO: when in detached state on a commit, restore to the
-        # detached/ target commits content when wnat to restore modified files
-
-
+        # DETACHED
+        # if in detached state, then set the worknig commit to the detached commit
+        if detached:
+            # when in detached state on a commit, restore to the
+            # detached/ target commits content when want to restore modified files
+            detached_commit = self._get_detached_commit()
+            print("In detached state while restoring...")
+            print("Latest detached commit hash: ", detached_commit)
+            # 2.) get files state from adequate commit
+            tree_hash = self.get_tree_hash_from_commit(detached_commit)
+            curr_working_tree_content_obj = self._get_tree_content_from_commit_hash(detached_commit)
+        else:
+            
+            tree_hash = self._get_latest_tree_hash()
+            curr_working_tree_content_obj = self._get_tree_content_from_commit_hash \
+                                    (self.get_branch_latest_commit(self.get_current_branch()))
 
         if not files:
             print("No file(s) given to retore...")
             return
+        
+        # If given files input is ".", then
+        # restore everything,
+        # both in staging and "normal restore"
+        if len(files) == 1 and files[0] == ".":
+            tree_hash = self._get_latest_tree_hash()
+            files = self.show_modified_objects(tree_hash, True)
+            print("Restoring all modified files...")
 
-        # TODO: if staging is set, then do the same
+        # if staging is set, then do the same
         # except reset files from stage to modified
         if staging:
             print("Restore staged file(s)...")
 
             # 1.) read files content from staged
             stash_content_obj = self._get_staged()
-            print("stash OBJ: ", stash_content_obj)
-            stash_content = self._organize_index_content_into_nested_list(stash_content_obj)
-            print("stash CONT: ",stash_content)
-
-            stash_content = self.read_content_of_files(stash_content)
-            print(stash_content)
-
+            if not stash_content_obj:
+                print("\nNo stashed file to restore...")
+                return
             
-            # 2.) write value to files
+            # Getting content from stash in this form: [[<file_name_1>, <file_hash_1>]
+            stash_content = self._organize_index_content_into_nested_list(stash_content_obj)
+            stash_content = self.read_content_of_files(stash_content)
 
+            # 2.) write value to files
             for file_block in stash_content:
                 with open(file_block[0], "w") as f:
                     f.write(file_block[1].decode())
@@ -1644,38 +1677,39 @@ class MyVcs:
             
             # empty staging area
             self._empty_staging_area()
-
             print("Restored files:")
             for file in restored_files:
-                print(file)
+                print("* ", file)
 
             return
 
         # 1.) iterate thru given file list
+        print("iterating files: ", files)
         for file in files:
-            latest_tree_hash = self._get_latest_tree_hash()
-            mod_file = self.show_modified_objects(latest_tree_hash, True)
-
+            mod_file = self.show_modified_objects(tree_hash, True)
             # if selected file in the list of modified files then go on
             if file in mod_file:
-                # 2.) get files state from last commit
-                latest_tree_content_obj = self._get_tree_content_from_commit_hash \
-                                          (self.get_branch_latest_commit(self.get_current_branch()))
                 # 3.) extract its content
-                latest_tree_content = self.read_tree_content(latest_tree_content_obj)
+                latest_tree_content = self.read_tree_content(curr_working_tree_content_obj)
                 content_of_files = self.read_content_of_files(latest_tree_content)
+                print("content of files: ", content_of_files)
                 
             else:
                 print(f"Selected file: {file} not modified, nothing to restore...")
                 return
             
         # 4.) write content to file
+        if not content_of_files:
+            print("\nNo file to restore...")
+            return
+        
         for file in content_of_files:
-            print(f"FILE CONT: {file}")
-            with open(file[0], "w") as f:
-                f.write(file[1].decode())
-                # add restore file name to collect and display at the end
-                restored_files.append(file[0])
+            if file[0] in files:
+                print(f"FILE CONT: {file}")
+                with open(file[0], "w") as f:
+                    f.write(file[1].decode())
+                    # add restore file name to collect and display at the end
+                    restored_files.append(file[0])
 
         # display restored files
         print("Restored files:")
