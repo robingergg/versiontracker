@@ -442,7 +442,7 @@ class MyVcs:
 
         curr_branch_path = os.path.join(MyVcs.curr_workdir, MyVcs.vcs, f"refs/heads/{branch}")
         if not os.path.exists(curr_branch_path):
-            print(f"Creating initial commit on branch '{curr_branch_path.split("/")[-1]}'")
+            print(f"Creating initial commit on branch {curr_branch_path.split('/')[-1]}")
             return None
         try:
             with open(curr_branch_path, "r") as f:
@@ -989,7 +989,7 @@ class MyVcs:
                         file_content = self._get_file_current_content(content_block[0])
                         saved_file_content = content_block[1].decode()
                         curr_file_content = file_content.decode()
-                        self._compare_file_content(saved_file_content, curr_file_content)
+                        self._dispaly_file_content_diff(saved_file_content, curr_file_content)
             return
 
         if commit_hash_1 == commit_hash_2:
@@ -1027,13 +1027,10 @@ class MyVcs:
         ret_lib = self.get_commit_attributes(latest_commit)
         return ret_lib.get("tree")
 
-    def _compare_file_content(self, last_content: str, current_content: str) -> str:
+    def _dispaly_file_content_diff(self, last_content: str, current_content: str) -> str:
         """
         Compares two files line by line and returns difference.
         """
-        # print(last_content)
-        # print(current_content)
-
         list_last_cont = last_content.split("\n")
         list_curr_cont = current_content.split("\n")
 
@@ -1069,7 +1066,6 @@ class MyVcs:
                     elif not curr_cont_line and last_cont_line:
                         print(Fore.RED + "- " + last_cont_line + Fore.RESET)
                     elif not curr_cont_line and not last_cont_line:
-                        # print(f"The Line: ", last_cont_line)
                         print()
 
     def search_for_block_difference(self, files_content_info_1: list[list[str, bytes]],
@@ -1105,7 +1101,7 @@ class MyVcs:
                     file_content_2 = self.get_content_by_file_name_from_block(file_name_1, files_content_info_2)
                     if file_content_1 != file_content_2:
                         print()
-                        self._compare_file_content(file_content_1.decode(), file_content_2.decode())
+                        self._dispaly_file_content_diff(file_content_1.decode(), file_content_2.decode())
                 
                 # filter out each file which has been processed
                 files_content_info_2 = [
@@ -1333,7 +1329,7 @@ class MyVcs:
 
                         # compare the two and display deviation if there is any
                         if latest_file_content != files_content:
-                            self._compare_file_content(latest_file_content.decode(), files_content.decode())
+                            self._dispaly_file_content_diff(latest_file_content.decode(), files_content.decode())
                         # this shall not happend since this part of the code
                         # will only be called if there is staged content 
                         else:
@@ -1358,7 +1354,7 @@ class MyVcs:
         # 2.) open nano and write the selected commits
         with open(MyVcs.tmp_file, "w") as f:
             for content in affected_commits:
-                f.write(f"pick {content["hash"]} {content["message"]}\n")
+                f.write(f"pick {content['hash']} {content['message']}\n")
 
         try:
             result = subprocess.run(["nano", MyVcs.tmp_file], check=True)
@@ -1382,6 +1378,9 @@ class MyVcs:
                         elif action == "e" or action == "edit":
                             self.interactive_edit(commit_hash, affected_commits)
 
+                        elif action == "s" or action == "squash":
+                            self.interactive_squash(commit_hash, affected_commits, tmp_file_content)
+
                     # TODO: implement other features such as edit, squash, etc...
             else:
                 print("Error: Nano closed unexpectedly.")
@@ -1390,6 +1389,67 @@ class MyVcs:
             print(f"File was not found: {MyVcs.tmp_file}, which is not supposed to happen...")
         except Exception as e:
             print(f"Unexpected error happened: {e}")
+
+    def interactive_squash(self, target_commit: str, affected_commits: list, tmp_file_content: str) -> None:
+        """
+            pick 91cbf192148e291145cb97aa67b66369f39d151a 4
+            s 7c10657fa6b50a117a2c8db1c54bdc0790fa1041 3
+            s 4944e6ca708c293f140458bf5a0b1ee31d41e641 2
+            pick c9299200e38f4d6f0ed49393428cfe25074bffe8 1
+        """
+        affected_commits.reverse()
+
+        # split nano content
+        # tmp_file_content = tmp_file_content.split("\n")
+
+        parent_commit = None
+        squashing_commit = None
+        parent_tree = None
+
+        # got thru the affected commits and find the squash ones
+        for commmit in tmp_file_content:
+            print("TMP FILE: ", tmp_file_content)
+            print("COMMIT: ", commmit)
+            action = commmit.split(" ")[0]
+            msg = commmit.split(" ")[2]
+
+            # it shall be, since it has already been controlled,
+            # however we still want to diversify it from 'pick'
+            if action == "s" or action == "squash":
+                squashing_commit = commmit.split(" ")[1]
+
+                commit_attrs = self.get_commit_attributes(squashing_commit)
+                parent_commit = commit_attrs.get("parent", None)
+
+        if not parent_commit or not squashing_commit:
+            print("Error: Unexpected error happened. Selected commit hash or its parent is None.")
+            return
+
+        # read squashing commit and its parent message and file contents
+        # parent_files_and_hashes = self._get_commits_all_file_content(parent)
+
+        # squash_files_and_hashes = self._get_commits_all_file_content(hash)
+
+        # self._dispaly_file_content_diff
+
+        # print(f"PARENT TREE CONTANT: {parent_files_and_hashes}")
+        # print(f"SQUAH TREE CONTANT: {squash_files_and_hashes}")
+
+        diff = self.read_commit_differences(squashing_commit, parent_commit)
+
+        # TODO use search_for_block_difference() to retur ndifference in lines
+        print(f"PARENT COMM: {parent_commit}, squahing commit: {squashing_commit}")
+        print("DIFF: ", diff)
+        
+
+
+        # create new commit out of the previous content
+
+        # (possible merge conflict)
+
+        # save rest of the commits
+
+
 
     def get_affected_commits(self, target_commit: str,
                              is_target_included: bool) -> list:
