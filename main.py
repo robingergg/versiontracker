@@ -245,8 +245,6 @@ class MyVcs:
 
         curr_idx = f"{file} {hashed_blob}"
 
-        # show files, that has been modified
-        self.display_modified_files()
 
         with open(f"{MyVcs.vcs}/index", "r") as f:
             index_content = f.read()
@@ -257,6 +255,9 @@ class MyVcs:
                 f.write(index_content)
         else:
             print(f"\nAlready staged: {file}")
+
+        # show files, that has been modified
+        self.display_modified_files()
 
     def display_modified_files(self):
         """
@@ -950,6 +951,10 @@ class MyVcs:
         Given two commit hash, it will first extract the trees inside them, then
         get all files, and their contents and compare them and log any difference.
         """
+        # we are going to collect all differences made in
+        # all files in case we want to retrive them
+        all_file_differences = {}
+
         # if file names are given and staged is true then dispaly only staged changes
         if staged and file_names:
             self.show_staged_difference(file_names)
@@ -995,8 +1000,8 @@ class MyVcs:
                         file_content = self._get_file_current_content(content_block[0])
                         saved_file_content = content_block[1].decode()
                         curr_file_content = file_content.decode()
-                        self._display_file_content_diff(saved_file_content, curr_file_content)
-            return
+                        all_file_differences = self._display_file_content_diff(saved_file_content, curr_file_content)
+            return all_file_differences
 
         if commit_hash_1 == commit_hash_2:
             print("No difference...")
@@ -1020,7 +1025,11 @@ class MyVcs:
             files_content_info_1 = self.read_content_of_files(tree_content_1)
             files_content_info_2 = self.read_content_of_files(tree_content_2)
 
-            files_content_info_2 = self.search_for_block_difference(files_content_info_1, files_content_info_2, file_names)
+            returned_values = self.search_for_block_difference(files_content_info_1, files_content_info_2, file_names)
+            files_content_info_2 = returned_values[0]
+            rest_of_values = returned_values[1:]
+            print(rest_of_values)
+            # TODO do somrthing with rest_of_files to return for furthet processign with squash
             # If anymore file(s) left in the second block content then process it
             if files_content_info_2:
                 self.search_for_block_difference(files_content_info_2, files_content_info_1, file_names)
@@ -1033,10 +1042,15 @@ class MyVcs:
         ret_lib = self.get_commit_attributes(latest_commit)
         return ret_lib.get("tree")
 
-    def _display_file_content_diff(self, last_content: str, current_content: str) -> str:
+    def _display_file_content_diff(self, last_content: str, current_content: str) -> dict:
         """
         Compares two files line by line and returns difference.
         """
+        files_line_diff = {
+            "last_file": None,
+            "current_file": None
+        }
+
         list_last_cont = last_content.split("\n")
         list_curr_cont = current_content.split("\n")
 
@@ -1065,20 +1079,32 @@ class MyVcs:
                     else:
                         print(Fore.GREEN + "+ " + curr_cont_line + Fore.RESET)
                         print(Fore.RED + "- " + last_cont_line + Fore.RESET)
+                        files_line_diff.update({"last_file": last_cont_line})
+                        files_line_diff.update({"current_file": curr_cont_line})
 
                 else:
                     if curr_cont_line and not last_cont_line:
                         print(Fore.GREEN + "+ " + curr_cont_line + Fore.RESET)
+                        files_line_diff.update({"current_file": curr_cont_line})
                     elif not curr_cont_line and last_cont_line:
                         print(Fore.RED + "- " + last_cont_line + Fore.RESET)
+                        files_line_diff.update({"last_file": last_cont_line})
                     elif not curr_cont_line and not last_cont_line:
                         print()
+
+        return files_line_diff
 
     def search_for_block_difference(self, files_content_info_1: list[list[str, bytes]],
                                     files_content_info_2: list[list[str, bytes]], file_names: Union[list[str]] = None) -> list:
             """
             Searches for differences between two block, which are made from commits -> trees.
             """
+            # collect all diff here found in file to return them too.
+            # Only decoded value shall be included
+            return_values = []
+            all_file_diff_list = []
+            all_file_diff_dict = {}
+
             search_for_file = False
 
             for file_block_1 in files_content_info_1:
@@ -1102,12 +1128,15 @@ class MyVcs:
                     print("New file:")
                     print(Fore.GREEN + f"{file_name_1}:")
                     print(file_content_1.decode() + Style.RESET_ALL)
+                    all_file_diff_list.append([file_name_1, file_content_1.decode()])
                 # print out the differences
                 else:
                     file_content_2 = self.get_content_by_file_name_from_block(file_name_1, files_content_info_2)
                     if file_content_1 != file_content_2:
                         print()
-                        self._display_file_content_diff(file_content_1.decode(), file_content_2.decode())
+                        all_file_diff_dict = self._display_file_content_diff(file_content_1.decode(), file_content_2.decode())
+                        all_file_diff_list.append(all_file_diff_dict)
+
                 
                 # filter out each file which has been processed
                 files_content_info_2 = [
@@ -1115,7 +1144,9 @@ class MyVcs:
                     if block[0] != file_name_1
                 ]
 
-            return files_content_info_2
+            return_values.append(files_content_info_2)
+            return_values.append(all_file_diff_list)
+            return return_values
 
     def get_content_by_file_name_from_block(self, file_name: str,
                                  files_content_info_2: list) -> Union[str, None]:
@@ -1448,10 +1479,11 @@ class MyVcs:
         # print(f"PARENT TREE CONTANT: {parent_files_and_hashes}")
         # print(f"SQUAH TREE CONTANT: {squash_files_and_hashes}")
 
+        # TODO: make it reeturn the differences
         diff = self.read_commit_differences(squashing_commit, parent_commit)
 
         # TODO use search_for_block_difference() to return difference in lines
-        print(f"PARENT COMM: {parent_commit}, squahing commit: {squashing_commit}")
+        print(f"PARENT COMM: {parent_commit}, squashing commit: {squashing_commit}")
         print("DIFF: ", diff)
         
 
